@@ -1,0 +1,51 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[bB]uild/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+*.log
+
+# .NET
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nuget.props
+*.nuget.targets
+
+# VS Code
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# OS
+[Dd]esktop.ini
+[Tt]humbs.db
+$RECYCLE.BIN/
+
+# Packages
+*.nupkg
+# NuGet Packages Directory
+packages/*
+# except build/, which is used as an MSBuild target.
+!packages/build/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# App config secrets
+MedAlgoApp/dbconfig.json
+MedControl/dbconfig.json
+dbconfig.json
