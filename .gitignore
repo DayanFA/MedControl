@@ -46,6 +46,12 @@ packages/*
 *.sqlite3
 
 # App config secrets
-MedAlgoApp/dbconfig.json
-MedControl/dbconfig.json
+MedControlApp/dbconfig.json
 dbconfig.json
+
+# Cadastro planilhas (não versionar)
+**/cadastro_alunos.xlsx
+**/cadastro_professores.xlsx
+
+# Legacy folder (to be deleted after migration)
+MedControlApp/
