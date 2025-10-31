@@ -305,7 +305,8 @@ namespace MedControl.Views
 
             // add Edit/Delete buttons as last columns if not present
             var bindTable = dt.Copy();
-            if (!bindTable.Columns.Contains("__actions")) bindTable.Columns.Add("__actions");
+            // REMOVE __actions column if present
+            if (bindTable.Columns.Contains("__actions")) bindTable.Columns.Remove("__actions");
 
             _grid.DataSource = bindTable;
 
@@ -323,11 +324,11 @@ namespace MedControl.Views
         private void EnsureButtonsColumn()
         {
             // Remove existing action buttons column if present
-            if (_grid.Columns.Contains("__btn_edit")) return; // already wired
+            if (_grid.Columns.Contains("EDITAR")) return; // already wired
 
-            // Add Edit/Delete as link columns
-            var editCol = new DataGridViewButtonColumn { Name = "__btn_edit", Text = "✏️ Editar", UseColumnTextForButtonValue = true, Width = 80 };
-            var delCol = new DataGridViewButtonColumn { Name = "__btn_del", Text = "🗑️ Excluir", UseColumnTextForButtonValue = true, Width = 80 };
+            // Add Edit/Delete as button columns with new names
+            var editCol = new DataGridViewButtonColumn { Name = "EDITAR", Text = "✏️ Editar", UseColumnTextForButtonValue = true, Width = 80 };
+            var delCol = new DataGridViewButtonColumn { Name = "EXCLUIR", Text = "🗑️ Excluir", UseColumnTextForButtonValue = true, Width = 80 };
             _grid.Columns.Add(editCol);
             _grid.Columns.Add(delCol);
             _grid.CellClick += Grid_CellClick;
@@ -385,11 +386,11 @@ namespace MedControl.Views
         private void Grid_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) return;
-            if (_grid.Columns[e.ColumnIndex].Name == "__btn_edit")
+            if (_grid.Columns[e.ColumnIndex].Name == "EDITAR")
             {
                 EditRowAtGridIndex(e.RowIndex);
             }
-            else if (_grid.Columns[e.ColumnIndex].Name == "__btn_del")
+            else if (_grid.Columns[e.ColumnIndex].Name == "EXCLUIR")
             {
                 var res = MessageBox.Show(this, "Excluir este registro?", "Confirmação", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (res == DialogResult.Yes) DeleteRowAtGridIndex(e.RowIndex);
@@ -753,58 +754,78 @@ namespace MedControl.Views
         {
             using var form = new AddEditForm(title);
 
-            var container = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-            var table = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(10), GrowStyle = TableLayoutPanelGrowStyle.AddRows };
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var layout = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                RowCount = 0,
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Padding = new Padding(18, 18, 18, 8),
+                BackColor = Color.White
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             int row = 0;
             foreach (DataColumn col in columns)
             {
                 if (string.Equals(col.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) continue;
-                table.RowCount = row + 1;
-                table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowCount = row + 1;
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-                var lbl = new Label { Text = col.ColumnName, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 8, 3, 3) };
-                var tb = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Dock = DockStyle.None, Height = 26, Margin = new Padding(3, 6, 3, 6) };
-                tb.MinimumSize = new Size(240, 26);
+                var lbl = new Label
+                {
+                    Text = col.ColumnName,
+                    AutoSize = true,
+                    Anchor = AnchorStyles.Right,
+                    Margin = new Padding(3, 8, 12, 8),
+                    Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point)
+                };
+                var tb = new TextBox
+                {
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                    Dock = DockStyle.Fill,
+                    Height = 28,
+                    Margin = new Padding(3, 8, 3, 8),
+                    Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point)
+                };
+                tb.MinimumSize = new Size(220, 28);
                 if (existing != null && existing.Table.Columns.Contains(col.ColumnName))
                 {
                     var val = existing[col.ColumnName];
                     tb.Text = val?.ToString() ?? string.Empty;
                 }
-                table.Controls.Add(lbl, 0, row);
-                table.Controls.Add(tb, 1, row);
+                layout.Controls.Add(lbl, 0, row);
+                layout.Controls.Add(tb, 1, row);
                 form._inputs[col.ColumnName] = tb;
                 row++;
             }
 
-            var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(8) };
-            var save = new Button { Text = "Salvar", AutoSize = true, Padding = new Padding(8) };
-            var cancel = new Button { Text = "Cancelar", AutoSize = true, Padding = new Padding(8) };
+            var buttons = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.RightToLeft,
+                Dock = DockStyle.Bottom,
+                AutoSize = true,
+                Padding = new Padding(8),
+                BackColor = Color.White
+            };
+            var save = new Button { Text = "Salvar", AutoSize = true, Padding = new Padding(10, 6, 10, 6), Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+            var cancel = new Button { Text = "Cancelar", AutoSize = true, Padding = new Padding(10, 6, 10, 6), Font = new Font("Segoe UI", 10F, FontStyle.Regular) };
             buttons.Controls.Add(save); buttons.Controls.Add(cancel);
 
-            container.Controls.Add(table);
-            form.Controls.Add(container);
+            form.Controls.Add(layout);
             form.Controls.Add(buttons);
 
-            // compute client size
-            var pref = table.GetPreferredSize(new Size(800, 0));
-            var width = Math.Min(900, Math.Max(480, pref.Width + 80));
-            var height = Math.Min(800, Math.Max(220, pref.Height + 140));
-            form.ClientSize = new Size(width, height);
+            // Ajusta tamanho inicial
+            form.ClientSize = new Size(Math.Max(420, layout.PreferredSize.Width + 60), Math.Max(220, layout.PreferredSize.Height + 80));
 
             save.Click += (_, __) =>
             {
-                // gather values
                 foreach (var kv in form._inputs)
-                {
                     form.Results[kv.Key] = kv.Value.Text ?? string.Empty;
-                }
                 form.DialogResult = DialogResult.OK;
                 form.Close();
             };
-
             cancel.Click += (_, __) => { form.DialogResult = DialogResult.Cancel; form.Close(); };
 
             var dr = form.ShowDialog();
