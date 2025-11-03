@@ -4,6 +4,8 @@ using System.Data;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace MedControl.Views
@@ -19,8 +21,7 @@ namespace MedControl.Views
     private readonly Button _exportBtn = CreateButton("Exportar", Color.FromArgb(76, 175, 80));
     private readonly Button _addBtn = CreateButton("Adicionar", Color.FromArgb(0, 123, 255));
 
-    // Shared in-memory table so edits persist across form instances during app runtime
-    private static DataTable? _sharedTable;
+    // Persistência agora é baseada em banco (Database.cs); removido _sharedTable
     // Tooltips for icon-only buttons
     private readonly ToolTip _buttonToolTip = new ToolTip();
     private readonly Panel _bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 48 };
@@ -40,6 +41,7 @@ namespace MedControl.Views
         private DataTable _filteredTable = new DataTable();
         private int _pageSize = 10;
         private int _currentPage = 1;
+    private bool _actionColorsHooked = false;
 
         public CadastroAlunosForm()
         {
@@ -60,6 +62,18 @@ namespace MedControl.Views
             // Bottom bar: pagination
             _prevBtn.AutoSize = true; _nextBtn.AutoSize = true; _prevBtn.FlatStyle = FlatStyle.Flat; _nextBtn.FlatStyle = FlatStyle.Flat;
             _prevBtn.Padding = new Padding(8); _nextBtn.Padding = new Padding(8);
+            // Improve arrow visibility with accent color and hover effect
+            var accent = Color.FromArgb(0, 123, 255);
+            foreach (var b in new[] { _prevBtn, _nextBtn })
+            {
+                b.BackColor = Color.White;
+                b.ForeColor = accent;
+                b.FlatAppearance.BorderSize = 1;
+                b.FlatAppearance.BorderColor = accent;
+                var btn = b; // avoid closure capture issues
+                btn.MouseEnter += (_, __) => { btn.BackColor = accent; btn.ForeColor = Color.White; };
+                btn.MouseLeave += (_, __) => { btn.BackColor = Color.White; btn.ForeColor = accent; };
+            }
             _prevBtn.Click += (_, __) => { if (_currentPage > 1) { _currentPage--; RefreshGrid(); } };
             _nextBtn.Click += (_, __) => { if (_currentPage < TotalPages) { _currentPage++; RefreshGrid(); } };
 
@@ -88,11 +102,28 @@ namespace MedControl.Views
             _grid.ReadOnly = true;
             _grid.RowHeadersVisible = false;
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            _grid.BorderStyle = BorderStyle.None;
+            _grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            _grid.EnableHeadersVisualStyles = false;
+            _grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(240, 242, 245);
+            _grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.Black;
+            _grid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold);
+            _grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(220, 235, 255);
+            _grid.DefaultCellStyle.SelectionForeColor = Color.Black;
+            // Keep rows uniform (no alternating row color)
+            _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.White;
+            _grid.RowTemplate.Height = 34;
             _grid.CellDoubleClick += Grid_CellDoubleClick;
             _grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
+            _grid.DataBindingComplete += (_, __) => EnsureActionColumnsAtEnd();
 
             // Events
             Load += CadastroAlunosForm_Load;
+            // Apply Windows 11-like effects (Mica/rounded) after handle is created
+            this.HandleCreated += (_, __) =>
+            {
+                try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { }
+            };
         }
 
         private void CenterGrid()
@@ -156,34 +187,53 @@ namespace MedControl.Views
 
         private void CadastroAlunosForm_Load(object? sender, EventArgs e)
         {
-            // Load data
-            // If there's an in-memory shared table (user previously loaded/edited), use it so changes persist while the app is running.
-            if (_sharedTable != null && _sharedTable.Rows.Count > 0)
+            // Inicializa DB e carrega alunos do banco
+            try { MedControl.Database.Setup(); } catch { }
+
+            try
             {
-                _fullTable = _sharedTable.Copy();
+                _fullTable = MedControl.Database.GetAlunosAsDataTable();
             }
-            else
+            catch
+            {
+                _fullTable = new DataTable();
+            }
+
+            // Se vazio, tenta pré-preencher a visualização com Excel configurado (não persiste até importar)
+            if (_fullTable.Rows.Count == 0)
             {
                 var path = Database.GetConfig("caminho_alunos");
                 if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
                 {
-                    _fullTable = ExcelHelper.LoadToDataTable(path);
+                    try { _fullTable = ExcelHelper.LoadToDataTable(path); } catch { _fullTable = new DataTable(); }
                 }
-                else
-                {
-                    // default structure
-                    _fullTable = new DataTable();
-                    if (!_fullTable.Columns.Contains("Nome")) _fullTable.Columns.Add("Nome");
-                }
-                // store initial load to shared table
-                _sharedTable = _fullTable.Copy();
             }
 
-            // Ensure we have an ID column for edits/deletes if none
+            // Garante coluna _id como string (GUID)
             if (!_fullTable.Columns.Contains("_id"))
             {
-                _fullTable.Columns.Add("_id", typeof(Guid));
-                foreach (DataRow r in _fullTable.Rows) r["_id"] = Guid.NewGuid();
+                _fullTable.Columns.Add("_id", typeof(string));
+                foreach (DataRow r in _fullTable.Rows) r["_id"] = Guid.NewGuid().ToString();
+            }
+            else
+            {
+                var colObj = _fullTable.Columns.Contains("_id") ? _fullTable.Columns["_id"] : null;
+                if (colObj is DataColumn idCol && idCol.DataType != typeof(string))
+                {
+                    idCol.ColumnName = "_id_old";
+                    _fullTable.Columns.Add("_id", typeof(string));
+                    foreach (DataRow r in _fullTable.Rows)
+                    {
+                        var v = r.Table.Columns.Contains("_id_old") ? r["_id_old"] : null;
+                        r["_id"] = v == null || v == DBNull.Value ? Guid.NewGuid().ToString() : v.ToString();
+                    }
+                    _fullTable.Columns.Remove("_id_old");
+                }
+            }
+
+            if (_fullTable.Columns.Count == 1)
+            {
+                _fullTable.Columns.Add("Nome");
             }
 
             _filteredTable = _fullTable.Copy();
@@ -202,38 +252,89 @@ namespace MedControl.Views
             _importBtn.Margin = new Padding(4, 6, 4, 6);
             _exportBtn.Margin = new Padding(4, 6, 4, 6);
             _addBtn.Margin = new Padding(4, 6, 4, 6);
-            // Make all three action buttons identical size and icon-only
-            var uniformSize = new Size(140, 48);
+            // Make all three action buttons identical size and with emoji + text labels
+            var uniformSize = new Size(150, 44);
             foreach (var b in new[] { _addBtn, _importBtn, _exportBtn })
             {
                 b.AutoSize = false;
                 b.Size = uniformSize;
                 b.MinimumSize = uniformSize;
-                b.Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
-                b.Text = string.Empty; // icon-only
-                b.ImageAlign = ContentAlignment.MiddleCenter;
+                b.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+                b.ImageAlign = ContentAlignment.MiddleLeft;
                 b.TextImageRelation = TextImageRelation.ImageBeforeText;
+                b.FlatStyle = FlatStyle.Flat;
                 b.FlatAppearance.BorderSize = 0;
             }
-
-            // attach icons and tooltips
-            _addBtn.Image = CreateIconBitmap("add", 20, 20);
-            _importBtn.Image = CreateIconBitmap("import", 20, 20);
-            _exportBtn.Image = CreateIconBitmap("export", 20, 20);
-            _buttonToolTip.SetToolTip(_addBtn, "Adicionar");
-            _buttonToolTip.SetToolTip(_importBtn, "Importar (pré-preenchimento)");
-            _buttonToolTip.SetToolTip(_exportBtn, "Exportar");
+            // Set emoji + text labels and apply hover style (buttons stay square)
+            ApplyButtonStyle(_addBtn, "➕ Adicionar", Color.FromArgb(0, 123, 255));
+            ApplyButtonStyle(_importBtn, "⬇️ Upload", Color.FromArgb(33, 150, 243));
+            ApplyButtonStyle(_exportBtn, "📤 Exportar", Color.FromArgb(76, 175, 80));
+            _buttonToolTip.SetToolTip(_addBtn, "Adicionar novo registro");
+            _buttonToolTip.SetToolTip(_importBtn, "Importar planilha (pré-preenchimento)");
+            _buttonToolTip.SetToolTip(_exportBtn, "Exportar para Excel");
 
             // place action buttons directly to the left of the search box with small spacing
             var actions = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(4), Margin = new Padding(0) };
             actions.Controls.Add(_addBtn);
             actions.Controls.Add(_importBtn);
             actions.Controls.Add(_exportBtn);
-            // vertically center actions inside the taller top panel
-            actions.Margin = new Padding(0, 18, 0, 0);
+            // vertically align actions with search box (same top/bottom margin as buttons)
+            actions.Margin = new Padding(0, 6, 0, 6);
             // add actions first so they appear to the left of search
             _topPanel.Controls.Add(actions);
+            // Style search box: same height and vertical margins as buttons for alignment
+            _searchBox.Font = new Font("Segoe UI", 10F, FontStyle.Regular);
+            _searchBox.Height = 44;
+            _searchBox.Margin = new Padding(12, 6, 8, 6);
+            _searchBox.BorderStyle = BorderStyle.FixedSingle;
+            this.Load += (_, __) => Roundify(_searchBox, 12);
+            _searchBox.SizeChanged += (_, __) => Roundify(_searchBox, 12);
             _topPanel.Controls.Add(_searchBox);
+        }
+
+        private static void Roundify(Control control, int radius)
+        {
+            if (control.Width <= 0 || control.Height <= 0) return;
+            int diameter = radius * 2;
+            Rectangle bounds = new Rectangle(0, 0, control.Width, control.Height);
+            using (GraphicsPath path = new GraphicsPath())
+            {
+                path.StartFigure();
+                path.AddArc(bounds.X, bounds.Y, diameter, diameter, 180, 90);
+                path.AddArc(bounds.Right - diameter, bounds.Y, diameter, diameter, 270, 90);
+                path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+                path.AddArc(bounds.X, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+                path.CloseFigure();
+                control.Region = new Region(path);
+            }
+        }
+
+        private void ApplyButtonStyle(Button btn, string text, Color baseColor)
+        {
+            btn.Text = text;
+            btn.BackColor = baseColor;
+            btn.ForeColor = Color.White;
+            btn.Cursor = Cursors.Hand;
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderSize = 0;
+
+            // Keep buttons square as requested (no rounded region applied)
+
+            // Hover/press visual feedback
+            Color hover = Darken(baseColor, 12);
+            Color pressed = Darken(baseColor, 22);
+            btn.MouseEnter += (_, __) => btn.BackColor = hover;
+            btn.MouseLeave += (_, __) => btn.BackColor = baseColor;
+            btn.MouseDown += (_, __) => btn.BackColor = pressed;
+            btn.MouseUp += (_, __) => btn.BackColor = hover;
+        }
+
+        private static Color Darken(Color color, int amount)
+        {
+            int r = Math.Max(0, color.R - amount);
+            int g = Math.Max(0, color.G - amount);
+            int b = Math.Max(0, color.B - amount);
+            return Color.FromArgb(color.A, r, g, b);
         }
 
         private void ApplyFilterAndRefresh()
@@ -313,12 +414,9 @@ namespace MedControl.Views
             // hide internal id column for cleaner view
             if (_grid.Columns.Contains("_id")) _grid.Columns["_id"].Visible = false;
 
-            // Ensure action button columns are visible (they are added as DataGridViewButtonColumn columns)
-            if (_grid.Columns.Contains("__btn_edit")) _grid.Columns["__btn_edit"].DisplayIndex = _grid.Columns.Count - 2;
-            if (_grid.Columns.Contains("__btn_del")) _grid.Columns["__btn_del"].DisplayIndex = _grid.Columns.Count - 1;
-
             UpdatePaginationControls();
             EnsureButtonsColumn();
+            EnsureActionColumnsAtEnd();
         }
 
         private void EnsureButtonsColumn()
@@ -327,11 +425,66 @@ namespace MedControl.Views
             if (_grid.Columns.Contains("EDITAR")) return; // already wired
 
             // Add Edit/Delete as button columns with new names
-            var editCol = new DataGridViewButtonColumn { Name = "EDITAR", Text = "✏️ Editar", UseColumnTextForButtonValue = true, Width = 80 };
-            var delCol = new DataGridViewButtonColumn { Name = "EXCLUIR", Text = "🗑️ Excluir", UseColumnTextForButtonValue = true, Width = 80 };
+            var editCol = new DataGridViewButtonColumn { Name = "EDITAR", Text = "✏️ Editar", UseColumnTextForButtonValue = true, Width = 80, SortMode = DataGridViewColumnSortMode.NotSortable, FlatStyle = FlatStyle.Flat };
+            var azul = Color.FromArgb(0, 123, 255);
+            var vermelho = Color.FromArgb(220, 53, 69);
+            editCol.DefaultCellStyle.BackColor = azul;
+            editCol.DefaultCellStyle.ForeColor = Color.White;
+            editCol.DefaultCellStyle.SelectionBackColor = azul;
+            editCol.DefaultCellStyle.SelectionForeColor = Color.White;
+            var delCol = new DataGridViewButtonColumn { Name = "EXCLUIR", Text = "🗑️ Excluir", UseColumnTextForButtonValue = true, Width = 80, SortMode = DataGridViewColumnSortMode.NotSortable, FlatStyle = FlatStyle.Flat };
+            delCol.DefaultCellStyle.BackColor = vermelho;
+            delCol.DefaultCellStyle.ForeColor = Color.White;
+            delCol.DefaultCellStyle.SelectionBackColor = vermelho;
+            delCol.DefaultCellStyle.SelectionForeColor = Color.White;
             _grid.Columns.Add(editCol);
             _grid.Columns.Add(delCol);
             _grid.CellClick += Grid_CellClick;
+            HookActionColumnColors();
+            EnsureActionColumnsAtEnd();
+        }
+
+        private void HookActionColumnColors()
+        {
+            if (_actionColorsHooked) return;
+            _actionColorsHooked = true;
+            _grid.CellFormatting += (s, e) =>
+            {
+                if (e.ColumnIndex < 0 || e.RowIndex < 0) return;
+                if (e.CellStyle == null) return;
+                var col = _grid.Columns[e.ColumnIndex];
+                if (col.Name == "EDITAR")
+                {
+                    var azul = Color.FromArgb(0, 123, 255);
+                    e.CellStyle.BackColor = azul;
+                    e.CellStyle.ForeColor = Color.White;
+                    e.CellStyle.SelectionBackColor = azul;
+                    e.CellStyle.SelectionForeColor = Color.White;
+                }
+                else if (col.Name == "EXCLUIR")
+                {
+                    var vermelho = Color.FromArgb(220, 53, 69);
+                    e.CellStyle.BackColor = vermelho;
+                    e.CellStyle.ForeColor = Color.White;
+                    e.CellStyle.SelectionBackColor = vermelho;
+                    e.CellStyle.SelectionForeColor = Color.White;
+                }
+            };
+        }
+
+        private void EnsureActionColumnsAtEnd()
+        {
+            try
+            {
+                if (_grid.Columns.Contains("EDITAR") && _grid.Columns.Contains("EXCLUIR"))
+                {
+                    // Push action columns to the last positions
+                    var lastIndex = _grid.Columns.Count - 1;
+                    _grid.Columns["EXCLUIR"].DisplayIndex = lastIndex;
+                    _grid.Columns["EDITAR"].DisplayIndex = Math.Max(0, lastIndex - 1);
+                }
+            }
+            catch { }
         }
 
         private void Grid_CellDoubleClick(object? sender, DataGridViewCellEventArgs e)
@@ -377,7 +530,7 @@ namespace MedControl.Views
                 if (orig != null)
                 {
                     orig[colName] = input;
-                    _sharedTable = _fullTable.Copy();
+                    _ = SaveRowToDatabaseAsync(orig);
                     ApplyFilterAndRefresh();
                 }
             }
@@ -405,8 +558,6 @@ namespace MedControl.Views
             if (!_fullTable.Columns.Cast<DataColumn>().Any(c => !string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)))
             {
                 _fullTable.Columns.Add("Nome");
-                // ensure shared table also updated
-                _sharedTable = _fullTable.Copy();
             }
 
             // Show multi-field editor and update all fields
@@ -423,7 +574,7 @@ namespace MedControl.Views
                         if (_fullTable.Columns.Contains(kv.Key)) orig[kv.Key] = kv.Value;
                     }
                 }
-                _sharedTable = _fullTable.Copy();
+                _ = SaveRowToDatabaseAsync(orig!);
                 ApplyFilterAndRefresh();
             }
         }
@@ -437,8 +588,7 @@ namespace MedControl.Views
             if (orig != null)
             {
                 _fullTable.Rows.Remove(orig);
-                // persist in shared table
-                _sharedTable = _fullTable.Copy();
+                _ = DeleteRowFromDatabaseAsync(id!);
                 ApplyFilterAndRefresh();
             }
         }
@@ -492,7 +642,6 @@ namespace MedControl.Views
             if (!_fullTable.Columns.Cast<DataColumn>().Any(c => !string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)))
             {
                 _fullTable.Columns.Add("Nome");
-                _sharedTable = _fullTable.Copy();
             }
 
             // Show multi-field editor to gather values for all fields
@@ -513,7 +662,7 @@ namespace MedControl.Views
                 var nr = _fullTable.NewRow();
                 foreach (DataColumn c in _fullTable.Columns)
                 {
-                    if (string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) nr["_id"] = Guid.NewGuid();
+                    if (string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) nr["_id"] = Guid.NewGuid().ToString();
                     else
                     {
                         if (values.TryGetValue(c.ColumnName, out var v)) nr[c.ColumnName] = v;
@@ -521,10 +670,67 @@ namespace MedControl.Views
                     }
                 }
                 _fullTable.Rows.Add(nr);
-                _sharedTable = _fullTable.Copy();
+                _ = SaveRowToDatabaseAsync(nr);
                 ApplyFilterAndRefresh();
                 MessageBox.Show(this, "Registro adicionado.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
+        }
+
+        // ===== Helpers: persist row changes asynchronously to Database =====
+        private Dictionary<string, string> BuildDictFromRow(DataRow row)
+        {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataColumn c in row.Table.Columns)
+            {
+                if (string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) continue;
+                dict[c.ColumnName] = Convert.ToString(row[c]) ?? string.Empty;
+            }
+            return dict;
+        }
+
+        private Task SaveRowToDatabaseAsync(DataRow row)
+        {
+            try
+            {
+                var uid = Convert.ToString(row["_id"]) ?? Guid.NewGuid().ToString();
+                var data = BuildDictFromRow(row);
+                // Grava de forma síncrona para garantir persistência antes de fechar a tela/app
+                Database.Setup();
+                Database.UpsertAluno(uid, data);
+                // Recarrega da base para refletir o estado canônico
+                ReloadFromDatabase();
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show(this, "Falha ao salvar no banco: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+            }
+            return Task.CompletedTask;
+        }
+
+        private Task DeleteRowFromDatabaseAsync(string uid)
+        {
+            try
+            {
+                Database.Setup();
+                Database.DeleteAluno(uid);
+                ReloadFromDatabase();
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show(this, "Falha ao excluir no banco: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+            }
+            return Task.CompletedTask;
+        }
+
+        private void ReloadFromDatabase()
+        {
+            try
+            {
+                var fresh = Database.GetAlunosAsDataTable();
+                _fullTable = fresh;
+                ApplyFilterAndRefresh();
+            }
+            catch { }
         }
 
         private void UpdatePaginationControls()
@@ -623,15 +829,55 @@ namespace MedControl.Views
             using var ofd = new OpenFileDialog { Filter = "Excel (*.xlsx)|*.xlsx" };
             if (ofd.ShowDialog(this) == DialogResult.OK)
             {
-                _fullTable = ExcelHelper.LoadToDataTable(ofd.FileName);
-                if (!_fullTable.Columns.Contains("_id"))
+                try
                 {
-                    _fullTable.Columns.Add("_id", typeof(Guid));
-                    foreach (DataRow r in _fullTable.Rows) r["_id"] = Guid.NewGuid();
+                    UseWaitCursor = true;
+                    Enabled = false;
+                    _fullTable = ExcelHelper.LoadToDataTable(ofd.FileName);
+                    if (!_fullTable.Columns.Contains("_id"))
+                    {
+                        _fullTable.Columns.Add("_id", typeof(string));
+                        foreach (DataRow r in _fullTable.Rows) r["_id"] = Guid.NewGuid().ToString();
+                    }
+                    else
+                    {
+                        var idCol = _fullTable.Columns["_id"];
+                        if (idCol != null && idCol.DataType != typeof(string))
+                        {
+                            idCol.ColumnName = "_id_old";
+                            _fullTable.Columns.Add("_id", typeof(string));
+                            foreach (DataRow r in _fullTable.Rows)
+                            {
+                                var v = r.Table.Columns.Contains("_id_old") ? r["_id_old"] : null;
+                                r["_id"] = v == null || v == DBNull.Value ? Guid.NewGuid().ToString() : v.ToString();
+                            }
+                            _fullTable.Columns.Remove("_id_old");
+                        }
+                    }
+
+                    ApplyFilterAndRefresh();
+
+                    _ = Task.Run(() => Database.ReplaceAllAlunos(_fullTable))
+                        .ContinueWith(_ =>
+                        {
+                            try
+                            {
+                                var fresh = Database.GetAlunosAsDataTable();
+                                BeginInvoke(new Action(() =>
+                                {
+                                    _fullTable = fresh;
+                                    ApplyFilterAndRefresh();
+                                }));
+                            }
+                            catch { }
+                        })
+                        .ContinueWith(_ => BeginInvoke(new Action(() => { Enabled = true; UseWaitCursor = false; })));
                 }
-                // Import is used as a pre-fill only (do not overwrite saved path by default).
-                _sharedTable = _fullTable.Copy();
-                ApplyFilterAndRefresh();
+                catch (Exception ex)
+                {
+                    Enabled = true; UseWaitCursor = false;
+                    MessageBox.Show(this, "Falha ao importar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 

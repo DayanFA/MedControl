@@ -9,7 +9,24 @@ namespace MedControl
 {
     public static class Database
     {
-        private static readonly string DbPath = Path.Combine(AppContext.BaseDirectory, "app.db");
+        private static readonly string DbPath = GetSqlitePath();
+
+        private static string GetSqlitePath()
+        {
+            // Persist the SQLite DB in %AppData%/MedControl/app.db to survive rebuilds/watch (bin cleanup)
+            try
+            {
+                var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                var dir = Path.Combine(appData, "MedControl");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                return Path.Combine(dir, "app.db");
+            }
+            catch
+            {
+                // Fallback to base directory if something goes wrong
+                return Path.Combine(AppContext.BaseDirectory, "app.db");
+            }
+        }
 
         private static string Provider => (AppConfig.Instance.DbProvider ?? "sqlite").ToLowerInvariant();
 
@@ -23,6 +40,26 @@ namespace MedControl
             return new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath }.ToString());
         }
 
+        public static string GetCurrentDataSourceDescription()
+        {
+            if (Provider == "mysql")
+            {
+                try
+                {
+                    var cs = AppConfig.Instance.MySqlConnectionString ?? string.Empty;
+                    var b = new MySqlConnectionStringBuilder(cs);
+                    var server = string.IsNullOrWhiteSpace(b.Server) ? "(server?)" : b.Server;
+                    var db = string.IsNullOrWhiteSpace(b.Database) ? "(db?)" : b.Database;
+                    return $"MySQL: {server}/{db}";
+                }
+                catch { return "MySQL"; }
+            }
+            else
+            {
+                try { return "SQLite: " + DbPath; } catch { return "SQLite"; }
+            }
+        }
+
         public static void Setup()
         {
             using var conn = CreateConnection();
@@ -30,77 +67,128 @@ namespace MedControl
             using var cmd = conn.CreateCommand();
             if (Provider == "mysql")
             {
-                cmd.CommandText = @"
-CREATE TABLE IF NOT EXISTS config (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  chave VARCHAR(255) UNIQUE,
-  valor TEXT
-);
-CREATE TABLE IF NOT EXISTS chaves (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  nome VARCHAR(255) UNIQUE,
-  num_copias INT,
-  descricao TEXT
-);
-CREATE TABLE IF NOT EXISTS reservas (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  chave VARCHAR(255),
-  aluno VARCHAR(255),
-  professor VARCHAR(255),
-  data_hora VARCHAR(19),
-  em_uso TINYINT(1),
-  termo TEXT,
-  devolvido TINYINT(1),
-  data_devolucao VARCHAR(19)
-);
-CREATE TABLE IF NOT EXISTS relatorio (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  chave VARCHAR(255),
-  aluno VARCHAR(255),
-  professor VARCHAR(255),
-  data_hora VARCHAR(19),
-  data_devolucao VARCHAR(19),
-  tempo_com_chave VARCHAR(255),
-  termo TEXT
-);";
+                // Ensure target database exists (CREATE DATABASE IF NOT EXISTS)
+                try
+                {
+                    var raw = AppConfig.Instance.MySqlConnectionString ?? string.Empty;
+                    var b = new MySqlConnectionStringBuilder(raw);
+                    var dbName = b.Database;
+                    if (!string.IsNullOrWhiteSpace(dbName))
+                    {
+                        var serverCsb = new MySqlConnectionStringBuilder(raw) { Database = string.Empty };
+                        using var serverConn = new MySqlConnection(serverCsb.ConnectionString);
+                        serverConn.Open();
+                        using var createDb = serverConn.CreateCommand();
+                        createDb.CommandText = $"CREATE DATABASE IF NOT EXISTS `{dbName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci";
+                        createDb.ExecuteNonQuery();
+                    }
+                }
+                catch { /* ignore - may lack CREATE DATABASE privilege */ }
+
+                var statements = new[]
+                {
+                    @"CREATE TABLE IF NOT EXISTS config (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        chave VARCHAR(255) UNIQUE,
+                        valor TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS chaves (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        nome VARCHAR(255) UNIQUE,
+                        num_copias INT,
+                        descricao TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS alunos (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        uid VARCHAR(36) UNIQUE,
+                        data JSON
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS professores (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        uid VARCHAR(36) UNIQUE,
+                        data JSON
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS reservas (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        chave VARCHAR(255),
+                        aluno VARCHAR(255),
+                        professor VARCHAR(255),
+                        data_hora VARCHAR(19),
+                        em_uso TINYINT(1),
+                        termo TEXT,
+                        devolvido TINYINT(1),
+                        data_devolucao VARCHAR(19)
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS relatorio (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        chave VARCHAR(255),
+                        aluno VARCHAR(255),
+                        professor VARCHAR(255),
+                        data_hora VARCHAR(19),
+                        data_devolucao VARCHAR(19),
+                        tempo_com_chave VARCHAR(255),
+                        termo TEXT
+                    )"
+                };
+                foreach (var sql in statements)
+                {
+                    cmd.CommandText = sql;
+                    cmd.ExecuteNonQuery();
+                }
             }
             else
             {
-                cmd.CommandText = @"
-CREATE TABLE IF NOT EXISTS config (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chave TEXT UNIQUE,
-    valor TEXT
-);
-CREATE TABLE IF NOT EXISTS chaves (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome TEXT UNIQUE,
-    num_copias INTEGER,
-    descricao TEXT
-);
-CREATE TABLE IF NOT EXISTS reservas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chave TEXT,
-    aluno TEXT,
-    professor TEXT,
-    data_hora TEXT,
-    em_uso INTEGER,
-    termo TEXT,
-    devolvido INTEGER,
-    data_devolucao TEXT
-);
-CREATE TABLE IF NOT EXISTS relatorio (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chave TEXT,
-    aluno TEXT,
-    professor TEXT,
-    data_hora TEXT,
-    data_devolucao TEXT,
-    tempo_com_chave TEXT,
-    termo TEXT
-);";
+                var statements = new[]
+                {
+                    @"CREATE TABLE IF NOT EXISTS config (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chave TEXT UNIQUE,
+                        valor TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS chaves (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nome TEXT UNIQUE,
+                        num_copias INTEGER,
+                        descricao TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS alunos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uid TEXT UNIQUE,
+                        data TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS professores (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        uid TEXT UNIQUE,
+                        data TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS reservas (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chave TEXT,
+                        aluno TEXT,
+                        professor TEXT,
+                        data_hora TEXT,
+                        em_uso INTEGER,
+                        termo TEXT,
+                        devolvido INTEGER,
+                        data_devolucao TEXT
+                    )",
+                    @"CREATE TABLE IF NOT EXISTS relatorio (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chave TEXT,
+                        aluno TEXT,
+                        professor TEXT,
+                        data_hora TEXT,
+                        data_devolucao TEXT,
+                        tempo_com_chave TEXT,
+                        termo TEXT
+                    )"
+                };
+                foreach (var sql in statements)
+                {
+                    cmd.CommandText = sql;
+                    cmd.ExecuteNonQuery();
+                }
             }
-            cmd.ExecuteNonQuery();
         }
 
         private static void AddParam(DbCommand cmd, string name, object? value)
@@ -151,6 +239,20 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@nome", c.Nome);
             AddParam(cmd, "@num", c.NumCopias);
             AddParam(cmd, "@desc", c.Descricao ?? "");
+            cmd.ExecuteNonQuery();
+        }
+
+        // Atualiza uma chave existente identificada pelo nome antigo; permite renomear a chave
+        public static void UpdateChave(string oldNome, Chave c)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"UPDATE chaves SET nome=@newNome, num_copias=@num, descricao=@desc WHERE nome=@oldNome";
+            AddParam(cmd, "@newNome", c.Nome);
+            AddParam(cmd, "@num", c.NumCopias);
+            AddParam(cmd, "@desc", c.Descricao ?? "");
+            AddParam(cmd, "@oldNome", oldNome);
             cmd.ExecuteNonQuery();
         }
 
@@ -322,6 +424,252 @@ ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor";
             AddParam(cmd, "@c", chave);
             var result = cmd.ExecuteScalar();
             return result == null || result == DBNull.Value ? null : Convert.ToString(result);
+        }
+
+        // ===== Alunos (tabela flexível com dados em JSON) =====
+        public static System.Data.DataTable GetAlunosAsDataTable()
+        {
+            var dt = new System.Data.DataTable();
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT uid, data FROM alunos";
+            using var rdr = cmd.ExecuteReader();
+            var rows = new List<(string uid, string json)>();
+            while (rdr.Read())
+            {
+                var uid = rdr.IsDBNull(0) ? Guid.NewGuid().ToString() : rdr.GetString(0);
+                var json = rdr.IsDBNull(1) ? "{}" : rdr.GetString(1);
+                rows.Add((uid, json));
+            }
+
+            // Descobrir colunas (união das chaves do JSON)
+            var allCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "_id" };
+            foreach (var r in rows)
+            {
+                try
+                {
+                    var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(r.json) ?? new Dictionary<string, string>();
+                    foreach (var k in dict.Keys) allCols.Add(k);
+                }
+                catch { }
+            }
+            foreach (var c in allCols) dt.Columns.Add(c);
+
+            // Popular linhas
+            foreach (var r in rows)
+            {
+                var dr = dt.NewRow();
+                dr["_id"] = r.uid;
+                try
+                {
+                    var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(r.json) ?? new Dictionary<string, string>();
+                    foreach (var kv in dict)
+                    {
+                        if (!dt.Columns.Contains(kv.Key)) dt.Columns.Add(kv.Key);
+                        dr[kv.Key] = kv.Value ?? string.Empty;
+                    }
+                }
+                catch { }
+                dt.Rows.Add(dr);
+            }
+            return dt;
+        }
+
+        public static void UpsertAluno(string uid, Dictionary<string, string> data)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            if (Provider == "mysql")
+            {
+                cmd.CommandText = @"INSERT INTO alunos (uid, data) VALUES (@u, CAST(@d AS JSON))
+ON DUPLICATE KEY UPDATE data=VALUES(data)";
+            }
+            else
+            {
+                cmd.CommandText = @"INSERT INTO alunos (uid, data) VALUES (@u, @d)
+ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
+            }
+            AddParam(cmd, "@u", uid);
+            AddParam(cmd, "@d", json);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void DeleteAluno(string uid)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM alunos WHERE uid=@u";
+            AddParam(cmd, "@u", uid);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void ReplaceAllAlunos(System.Data.DataTable table)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using (var tx = conn.BeginTransaction())
+            {
+                // Limpa tudo
+                using (var del = conn.CreateCommand())
+                {
+                    del.Transaction = tx;
+                    del.CommandText = "DELETE FROM alunos";
+                    del.ExecuteNonQuery();
+                }
+
+                // Insere todos
+                foreach (System.Data.DataRow r in table.Rows)
+                {
+                    var uid = r.Table.Columns.Contains("_id") && r["_id"] != null && r["_id"] != DBNull.Value
+                        ? Convert.ToString(r["_id"])!
+                        : Guid.NewGuid().ToString();
+                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (System.Data.DataColumn c in table.Columns)
+                    {
+                        if (string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) continue;
+                        dict[c.ColumnName] = Convert.ToString(r[c]) ?? string.Empty;
+                    }
+                    using var ins = conn.CreateCommand();
+                    ins.Transaction = tx;
+                    if (Provider == "mysql")
+                    {
+                        ins.CommandText = "INSERT INTO alunos (uid, data) VALUES (@u, CAST(@d AS JSON))";
+                    }
+                    else
+                    {
+                        ins.CommandText = "INSERT INTO alunos (uid, data) VALUES (@u, @d)";
+                    }
+                    AddParam(ins, "@u", uid);
+                    AddParam(ins, "@d", System.Text.Json.JsonSerializer.Serialize(dict));
+                    ins.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+        }
+
+        // ===== Professores (mesmo modelo flexível em JSON) =====
+        public static System.Data.DataTable GetProfessoresAsDataTable()
+        {
+            var dt = new System.Data.DataTable();
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT uid, data FROM professores";
+            using var rdr = cmd.ExecuteReader();
+            var rows = new List<(string uid, string json)>();
+            while (rdr.Read())
+            {
+                var uid = rdr.IsDBNull(0) ? Guid.NewGuid().ToString() : rdr.GetString(0);
+                var json = rdr.IsDBNull(1) ? "{}" : rdr.GetString(1);
+                rows.Add((uid, json));
+            }
+
+            var allCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "_id" };
+            foreach (var r in rows)
+            {
+                try
+                {
+                    var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(r.json) ?? new Dictionary<string, string>();
+                    foreach (var k in dict.Keys) allCols.Add(k);
+                }
+                catch { }
+            }
+            foreach (var c in allCols) dt.Columns.Add(c);
+
+            foreach (var r in rows)
+            {
+                var dr = dt.NewRow();
+                dr["_id"] = r.uid;
+                try
+                {
+                    var dict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(r.json) ?? new Dictionary<string, string>();
+                    foreach (var kv in dict)
+                    {
+                        if (!dt.Columns.Contains(kv.Key)) dt.Columns.Add(kv.Key);
+                        dr[kv.Key] = kv.Value ?? string.Empty;
+                    }
+                }
+                catch { }
+                dt.Rows.Add(dr);
+            }
+            return dt;
+        }
+
+        public static void UpsertProfessor(string uid, Dictionary<string, string> data)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            if (Provider == "mysql")
+            {
+                cmd.CommandText = @"INSERT INTO professores (uid, data) VALUES (@u, CAST(@d AS JSON))
+ON DUPLICATE KEY UPDATE data=VALUES(data)";
+            }
+            else
+            {
+                cmd.CommandText = @"INSERT INTO professores (uid, data) VALUES (@u, @d)
+ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
+            }
+            AddParam(cmd, "@u", uid);
+            AddParam(cmd, "@d", json);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void DeleteProfessor(string uid)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM professores WHERE uid=@u";
+            AddParam(cmd, "@u", uid);
+            cmd.ExecuteNonQuery();
+        }
+
+        public static void ReplaceAllProfessores(System.Data.DataTable table)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using (var tx = conn.BeginTransaction())
+            {
+                using (var del = conn.CreateCommand())
+                {
+                    del.Transaction = tx;
+                    del.CommandText = "DELETE FROM professores";
+                    del.ExecuteNonQuery();
+                }
+
+                foreach (System.Data.DataRow r in table.Rows)
+                {
+                    var uid = r.Table.Columns.Contains("_id") && r["_id"] != null && r["_id"] != DBNull.Value
+                        ? Convert.ToString(r["_id"])!
+                        : Guid.NewGuid().ToString();
+                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (System.Data.DataColumn c in table.Columns)
+                    {
+                        if (string.Equals(c.ColumnName, "_id", StringComparison.OrdinalIgnoreCase)) continue;
+                        dict[c.ColumnName] = Convert.ToString(r[c]) ?? string.Empty;
+                    }
+                    using var ins = conn.CreateCommand();
+                    ins.Transaction = tx;
+                    if (Provider == "mysql")
+                    {
+                        ins.CommandText = "INSERT INTO professores (uid, data) VALUES (@u, CAST(@d AS JSON))";
+                    }
+                    else
+                    {
+                        ins.CommandText = "INSERT INTO professores (uid, data) VALUES (@u, @d)";
+                    }
+                    AddParam(ins, "@u", uid);
+                    AddParam(ins, "@d", System.Text.Json.JsonSerializer.Serialize(dict));
+                    ins.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
         }
     }
 }
