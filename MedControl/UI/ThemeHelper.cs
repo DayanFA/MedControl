@@ -2,17 +2,68 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using System.IO;
 
 namespace MedControl.UI
 {
     public static class ThemeHelper
     {
+        private static Icon? _appIcon;
+
+        // Tenta carregar o ícone do app a partir de Assets/app.ico (preferido) ou Assets/app.png
+        private static Icon? TryLoadAppIcon()
+        {
+            if (_appIcon != null) return _appIcon;
+            try
+            {
+                var baseDir = AppContext.BaseDirectory;
+                // Procura primeiro por ICO
+                var icoPath = Path.Combine(baseDir, "Assets", "app.ico");
+                if (File.Exists(icoPath))
+                {
+                    _appIcon = new Icon(icoPath);
+                    return _appIcon;
+                }
+
+                // Como fallback, tenta PNG -> Icon em runtime
+                var pngPath = Path.Combine(baseDir, "Assets", "app.png");
+                if (File.Exists(pngPath))
+                {
+                    using var bmp = new Bitmap(pngPath);
+                    // reduz pra 256 ou 32 se necessário
+                    var size = bmp.Width > 256 || bmp.Height > 256 ? 256 : Math.Max(32, Math.Min(bmp.Width, bmp.Height));
+                    using var resized = new Bitmap(bmp, new Size(size, size));
+                    var hIcon = resized.GetHicon();
+                    _appIcon = Icon.FromHandle(hIcon);
+                    return _appIcon;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static void ApplyAppIcon(Form form)
+        {
+            try
+            {
+                var ic = TryLoadAppIcon();
+                if (ic != null)
+                {
+                    form.Icon = ic;
+                }
+            }
+            catch { }
+        }
+
         public static void ApplyCurrentTheme(Form form)
         {
             try
             {
                 var themeRaw = (MedControl.Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
                 var theme = NormalizeThemeKey(themeRaw);
+
+                // Define o ícone do formulário, se disponível
+                try { ApplyAppIcon(form); } catch { }
 
                 // Primeiro: remover efeitos Mica se não for tema Mica
                 if (theme != "mica")
@@ -374,6 +425,7 @@ namespace MedControl.UI
                 {
                     try
                     {
+                        ApplyAppIcon(f);
                         ApplyCurrentTheme(f);
                         // Opcional: chamar método ApplyTheme específico do formulário, se existir
                         try

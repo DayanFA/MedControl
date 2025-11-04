@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MedControl</AssemblyName>
     <RootNamespace>MedControl</RootNamespace>
+    <!-- Ícone do aplicativo (condicional). Coloque um arquivo em Assets/app.ico para aplicar ao executável -->
+    <ApplicationIcon Condition="Exists('Assets\\app.ico')">Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,5 +20,11 @@
     <PackageReference Include="MySqlConnector" Version="2.3.7" />
     <PackageReference Include="ReaLTaiizor" Version="3.8.1.3" />
   </ItemGroup>
+
+  <!-- Garante que a pasta Assets exista e que imagens sejam copiadas para a pasta de saída -->
+  <ItemGroup>
+    <None Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 
 </Project>

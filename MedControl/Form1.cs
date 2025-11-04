@@ -316,6 +316,8 @@ namespace MedControl
 
         private void ApplyTheme()
         {
+            // Sempre aplicar estilos/ícone padrão primeiro (inclui tema 'padrao')
+            try { ThemeHelper.ApplyCurrentTheme(this); } catch { }
             // theme selection
             var raw = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
             var theme = raw switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => raw };
@@ -347,6 +349,7 @@ namespace MedControl
             _keysPanel.BackColor = bg;
             _headerLabel.ForeColor = theme == "branco" || theme == "classico" ? Color.Black : Color.White;
             
+            // Reaplica o tema detalhado para estilos avançados quando não for o 'padrao'
             if (theme == "classico" || theme == "mica" || theme == "alto_contraste" || theme == "terminal" || theme == "claro" || theme == "escuro")
             {
                 try { ThemeHelper.ApplyCurrentTheme(this); } catch { }
