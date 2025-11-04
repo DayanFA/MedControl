@@ -56,8 +56,5 @@ dbconfig.json
 # Legacy folder (to be deleted after migration)
 MedControlApp/
 
-# Installer output (do not version large binaries)
-tools/installer/dist/
-
 # Debug symbols
 *.pdb
