@@ -114,7 +114,8 @@ namespace MedControl
             Controls.Add(_mainPanel);
 
             // periodic refresh (optional)
-            _refreshTimer = new System.Windows.Forms.Timer { Interval = 30000 };
+            // Atualiza a cada segundo para refletir mudanças em tempo real (segundos)
+            _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _refreshTimer.Tick += (_, __) => RefreshKeysUi();
             _refreshTimer.Start();
 
@@ -186,11 +187,13 @@ namespace MedControl
                 else if (statusText == "Reservado") countRes++;
                 else if (statusText == "Em Uso") countUso++;
 
-                // Card panel styled like Python (burlywood) with extra details
-                var panel = new Panel
+                // Card panel: quadrado, adapta tipografia ao conteúdo
+                int tileSize = 180;
+                var panel = new MedControl.UI.SquareCardPanel
                 {
-                    Width = 180,
-                    Height = 130,
+                    SizeHint = tileSize,
+                    Width = tileSize,
+                    Height = tileSize,
                     BackColor = GetCardColor(),
                     BorderStyle = BorderStyle.FixedSingle,
                     Padding = new Padding(6),
@@ -201,11 +204,13 @@ namespace MedControl
                 {
                     Text = c.Nome,
                     Dock = DockStyle.Top,
-                    Height = 22,
+                    Height = 24,
                     TextAlign = ContentAlignment.MiddleCenter,
                     BackColor = GetCardColor(),
                     Font = new Font("Segoe UI", 10, FontStyle.Bold)
                 };
+                lbl.AutoEllipsis = true;
+                lbl.AutoSize = false;
 
                 var status = new Label
                 {
@@ -225,12 +230,14 @@ namespace MedControl
                     var nome = string.IsNullOrWhiteSpace(ativa.Aluno) ? ativa.Professor : ativa.Aluno;
                     var dur = DateTime.Now - ativa.DataHora;
                     string durStr = FormatDurationShort(dur);
-                    detailsText = $"Com: {nome}\nDesde: {ativa.DataHora:dd/MM HH:mm} • {durStr}";
+                    // Mostrar segundos tanto no horário de início quanto na duração
+                    detailsText = $"Com: {nome}\nDesde: {ativa.DataHora:dd/MM HH:mm:ss} • {durStr}";
                 }
                 else if (reservadaHoje != null)
                 {
                     var nome = string.IsNullOrWhiteSpace(reservadaHoje.Aluno) ? reservadaHoje.Professor : reservadaHoje.Aluno;
-                    detailsText = $"Reserva: {nome}\nHorário: {reservadaHoje.DataHora:HH:mm}";
+                    // Mostrar segundos no horário da reserva
+                    detailsText = $"Reserva: {nome}\nHorário: {reservadaHoje.DataHora:HH:mm:ss}";
                 }
 
                 var details = new Label
@@ -241,6 +248,11 @@ namespace MedControl
                     BackColor = GetCardColor(),
                     Font = new Font("Segoe UI", 9, FontStyle.Regular)
                 };
+                details.AutoSize = false;
+                details.Padding = new Padding(2);
+                details.UseMnemonic = false;
+                details.AutoEllipsis = false; // permitir múltiplas linhas
+                details.MaximumSize = new Size(int.MaxValue, int.MaxValue);
 
                 // availability based on num_copias
                 int emUsoCount = reservasDaChave.Count(r => !r.Devolvido && r.EmUso);
@@ -276,6 +288,9 @@ namespace MedControl
                 panel.Controls.Add(status);
                 panel.Controls.Add(lbl);
                 _keysPanel.Controls.Add(panel);
+
+                // Ajusta fontes para caber no cartão sem perder o formato quadrado
+                FitCardTypography(panel, lbl, details);
             }
 
             // update badges
@@ -416,6 +431,50 @@ namespace MedControl
             return false;
         }
 
+        // Ajusta a tipografia do cartão para caber no espaço quadrado
+        private void FitCardTypography(Panel panel, Label title, Label details)
+        {
+            try
+            {
+                // Garantir layout antes de medir
+                panel.PerformLayout();
+
+                // Ajuste do título (uma linha com reticências)
+                int maxTitleWidth = Math.Max(20, panel.ClientSize.Width - (title.Margin.Horizontal + panel.Padding.Horizontal));
+                float titleSize = title.Font.Size;
+                while (titleSize > 8f && TextRenderer.MeasureText(title.Text, new Font(title.Font, FontStyle.Bold)).Width > maxTitleWidth)
+                {
+                    titleSize -= 0.5f;
+                    title.Font = new Font(title.Font.FontFamily, titleSize, FontStyle.Bold);
+                }
+
+                // Ajuste dos detalhes (múltiplas linhas). Reduz a fonte se o texto for grande
+                if (!string.IsNullOrWhiteSpace(details.Text))
+                {
+                    int usedTop = title.Height + (panel.Padding.Top);
+                    int usedBottom = 18 + (panel.Padding.Bottom); // disponibilidade tem 18px
+                    int availHeight = Math.Max(20, panel.ClientSize.Height - usedTop - usedBottom);
+                    int availWidth = Math.Max(50, panel.ClientSize.Width - (details.Margin.Horizontal + panel.Padding.Horizontal));
+
+                    details.MaximumSize = new Size(availWidth, availHeight);
+                    float detSize = details.Font.Size;
+                    int tries = 0;
+                    while (tries < 12 && detSize > 7f)
+                    {
+                        var testFont = new Font(details.Font.FontFamily, detSize, details.Font.Style);
+                        var size = TextRenderer.MeasureText(details.Text, testFont, new Size(availWidth, int.MaxValue), TextFormatFlags.WordBreak);
+                        if (size.Height <= availHeight)
+                        {
+                            details.Font = testFont;
+                            break;
+                        }
+                        detSize -= 0.5f; tries++;
+                    }
+                }
+            }
+            catch { }
+        }
+
 
         private static Label CreateBadgeLabel(string text, Color back)
         {
@@ -436,23 +495,28 @@ namespace MedControl
 
         private static string FormatDurationShort(TimeSpan ts)
         {
+            // Sempre que possível, incluir segundos para ver a atualização em tempo real
             if (ts.TotalDays >= 1)
             {
                 int d = (int)ts.TotalDays;
                 int h = ts.Hours;
+                int m = ts.Minutes;
+                int s = ts.Seconds;
+                // Para dias, manter mais compacto: dias e horas
                 return h > 0 ? $"{d}d {h}h" : $"{d}d";
             }
             if (ts.TotalHours >= 1)
             {
                 int h = (int)ts.TotalHours;
                 int m = ts.Minutes;
-                return m > 0 ? $"{h}h {m}m" : $"{h}h";
+                int s = ts.Seconds;
+                return $"{h}h {m}m {s}s";
             }
             if (ts.TotalMinutes >= 1)
             {
                 int m = (int)ts.TotalMinutes;
                 int s = ts.Seconds;
-                return s > 0 ? $"{m}m {s}s" : $"{m}m";
+                return $"{m}m {s}s";
             }
             return $"{ts.Seconds}s";
         }
