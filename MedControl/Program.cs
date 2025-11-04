@@ -20,6 +20,8 @@ static class Program
             MedControl.Database.Setup();
             try { MedControl.SyncService.Start(); } catch { }
             try { if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Host) MedControl.GroupHost.Start(); else MedControl.GroupHost.Stop(); } catch { }
+            // Inicia coordenação de papéis (host/client) com eleição automática e operação offline-first
+            try { MedControl.GroupCoordinator.Start(); } catch { }
             try
             {
                 if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Client)
@@ -41,6 +43,7 @@ static class Program
         }
         catch { }
     Application.Run(new Form1());
+    try { MedControl.GroupCoordinator.Stop(); } catch { }
     try { MedControl.GroupHost.Stop(); } catch { }
     try { MedControl.SyncService.Stop(); } catch { }
     }    

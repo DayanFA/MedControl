@@ -22,6 +22,8 @@ namespace MedControl
     private ToolStripLabel _statusDot;
     private ToolStripLabel _statusText;
     private System.Windows.Forms.Timer? _statusTimer;
+    // Usado para reduzir flicker: evita reconstruir a UI se nada relevante mudou
+    private string? _lastKeysSignature;
 
         public Form1()
         {
@@ -138,7 +140,7 @@ namespace MedControl
             Controls.Add(_mainPanel);
 
             // periodic refresh (optional)
-            // Atualiza a cada segundo para refletir mudanças em tempo real (segundos)
+            // Mantém o timer em 1s, mas vamos evitar rebuild quando nada mudou
             _refreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _refreshTimer.Tick += (_, __) => RefreshKeysUi();
             _refreshTimer.Start();
@@ -171,179 +173,219 @@ namespace MedControl
 
         private void RefreshKeysUi()
         {
-            _keysPanel.SuspendLayout();
-            // Evita flicker: suspende repaints do painel durante a atualização
-            _keysPanel.Controls.Clear();
-
-            var reservas = Database.GetReservas();
-            var chaves = Database.GetChaves();
-
-            int countDisp = 0, countRes = 0, countUso = 0;
-
-            foreach (var c in chaves)
+            try
             {
-                // Determine status
-                var statusColor = Color.LightGreen; // Disponível
-                var statusText = "Disponível";
-                var nowDate = DateTime.Now.Date;
-                var reservasDaChave = reservas.Where(x => x.Chave == c.Nome).ToList();
+                // 1) Coleta dados e calcula uma assinatura estável (ignora variações por segundo)
+                var reservas = Database.GetReservas();
+                var chaves = Database.GetChaves();
 
-                var ativa = reservasDaChave
-                    .Where(r => !r.Devolvido && r.EmUso)
-                    .OrderByDescending(r => r.DataHora)
-                    .FirstOrDefault();
-                var reservadaHoje = reservasDaChave
-                    .Where(r => !r.Devolvido && !r.EmUso && r.DataHora.Date == nowDate)
-                    .OrderBy(r => r.DataHora)
-                    .FirstOrDefault();
+                int countDisp = 0, countRes = 0, countUso = 0;
+                var now = DateTime.Now;
+                var nowDate = now.Date;
 
-                foreach (var r in reservasDaChave)
+                System.Text.StringBuilder sig = new System.Text.StringBuilder();
+                foreach (var c in chaves)
                 {
-                    if (!r.Devolvido)
+                    var reservasDaChave = reservas.Where(x => x.Chave == c.Nome).ToList();
+                    var ativa = reservasDaChave
+                        .Where(r => !r.Devolvido && r.EmUso)
+                        .OrderByDescending(r => r.DataHora)
+                        .FirstOrDefault();
+                    var reservadaHoje = reservasDaChave
+                        .Where(r => !r.Devolvido && !r.EmUso && r.DataHora.Date == nowDate)
+                        .OrderBy(r => r.DataHora)
+                        .FirstOrDefault();
+
+                    string statusText = "Disponível";
+                    foreach (var r in reservasDaChave)
                     {
-                        if (r.EmUso)
+                        if (!r.Devolvido)
                         {
-                            statusColor = Color.LightCoral; // Em uso
-                            statusText = "Em Uso"; break;
-                        }
-                        else if (r.DataHora.Date == nowDate)
-                        {
-                            statusColor = Color.Khaki; // Reservado hoje
-                            statusText = "Reservado";
+                            if (r.EmUso) { statusText = "Em Uso"; break; }
+                            else if (r.DataHora.Date == nowDate) { statusText = "Reservado"; }
                         }
                     }
-                }
 
-                // counts
-                if (statusText == "Disponível") countDisp++;
-                else if (statusText == "Reservado") countRes++;
-                else if (statusText == "Em Uso") countUso++;
+                    if (statusText == "Disponível") countDisp++; else if (statusText == "Reservado") countRes++; else if (statusText == "Em Uso") countUso++;
 
-                // Card panel: quadrado, adapta tipografia ao conteúdo
-                int tileSize = 180;
-                var panel = new MedControl.UI.SquareCardPanel
-                {
-                    SizeHint = tileSize,
-                    Width = tileSize,
-                    Height = tileSize,
-                    BackColor = GetCardColor(),
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Padding = new Padding(6),
-                    Margin = new Padding(10)
-                };
+                    // Disponibilidade por cópias atuais
+                    int emUsoCount = reservasDaChave.Count(r => !r.Devolvido && r.EmUso);
+                    int disponiveis = Math.Max(0, (c.NumCopias <= 0 ? 0 : c.NumCopias) - emUsoCount);
 
-                var lbl = new Label
-                {
-                    Text = c.Nome,
-                    Dock = DockStyle.Top,
-                    Height = 24,
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    BackColor = GetCardColor(),
-                    Font = new Font("Segoe UI", 10, FontStyle.Bold)
-                };
-                lbl.AutoEllipsis = true;
-                lbl.AutoSize = false;
-
-                var status = new Label
-                {
-                    Text = statusText,
-                    BackColor = statusColor,
-                    Dock = DockStyle.Top,
-                    Height = 24,
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Segoe UI", 10, FontStyle.Bold)
-                };
-                status.Tag = "keep-backcolor keep-font";
-
-                // details line: who and since when
-                string detailsText = string.Empty;
-                if (ativa != null)
-                {
-                    var nome = string.IsNullOrWhiteSpace(ativa.Aluno) ? ativa.Professor : ativa.Aluno;
-                    var dur = DateTime.Now - ativa.DataHora;
-                    string durStr = FormatDurationShort(dur);
-                    // Mostrar segundos tanto no horário de início quanto na duração
-                    detailsText = $"Com: {nome}\nDesde: {ativa.DataHora:dd/MM HH:mm:ss} • {durStr}";
-                }
-                else if (reservadaHoje != null)
-                {
-                    var nome = string.IsNullOrWhiteSpace(reservadaHoje.Aluno) ? reservadaHoje.Professor : reservadaHoje.Aluno;
-                    // Mostrar segundos no horário da reserva
-                    detailsText = $"Reserva: {nome}\nHorário: {reservadaHoje.DataHora:HH:mm:ss}";
-                }
-
-                var details = new Label
-                {
-                    Text = detailsText,
-                    Dock = DockStyle.Fill,
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    BackColor = GetCardColor(),
-                    Font = new Font("Segoe UI", 9, FontStyle.Regular)
-                };
-                details.AutoSize = false;
-                details.Padding = new Padding(2);
-                details.UseMnemonic = false;
-                details.AutoEllipsis = false; // permitir múltiplas linhas
-                details.MaximumSize = new Size(int.MaxValue, int.MaxValue);
-
-                // availability based on num_copias
-                int emUsoCount = reservasDaChave.Count(r => !r.Devolvido && r.EmUso);
-                int disponiveis = Math.Max(0, (c.NumCopias <= 0 ? 0 : c.NumCopias) - emUsoCount);
-                var disponibilidade = new Label
-                {
-                    Text = $"Disponíveis: {disponiveis} de {c.NumCopias}",
-                    Dock = DockStyle.Bottom,
-                    Height = 18,
-                    TextAlign = ContentAlignment.MiddleCenter,
-                    BackColor = GetCardColor(),
-                    Font = new Font("Segoe UI", 8, FontStyle.Italic)
-                };
-
-                // Tooltip with details similar to Python
-                var reservasText = string.Join("\n",
-                    reservasDaChave.Select(r =>
+                    // Para a assinatura, ignorar segundos: usar minutos de duração
+                    int minutos = 0;
+                    string nomeRef = string.Empty;
+                    if (ativa != null)
                     {
-                        var nome = string.IsNullOrWhiteSpace(r.Aluno) ? r.Professor : r.Aluno;
-                        return $"{nome} - {r.DataHora:dd/MM/yyyy HH:mm:ss}";
-                    }));
-                var statusInfo = $"Status: {statusText}" + (string.IsNullOrEmpty(reservasText) ? string.Empty : $"\nReservas:\n{reservasText}");
-                _toolTip.SetToolTip(status, statusInfo);
-                _toolTip.SetToolTip(panel, statusInfo);
+                        nomeRef = string.IsNullOrWhiteSpace(ativa.Aluno) ? (ativa.Professor ?? string.Empty) : (ativa.Aluno ?? string.Empty);
+                        minutos = (int)Math.Floor((now - ativa.DataHora).TotalMinutes);
+                    }
+                    else if (reservadaHoje != null)
+                    {
+                        nomeRef = string.IsNullOrWhiteSpace(reservadaHoje.Aluno) ? (reservadaHoje.Professor ?? string.Empty) : (reservadaHoje.Aluno ?? string.Empty);
+                        minutos = reservadaHoje.DataHora.Hour * 60 + reservadaHoje.DataHora.Minute;
+                    }
 
-                // Click opens Entregas, then refresh
-                // Clique em qualquer parte do card (ou seus filhos) abre relação filtrada pela chave
-                var chaveNome = c.Nome; // capturar para o handler
-                EventHandler open = (_, __) => { new Views.EntregasForm(chaveNome).ShowDialog(this); RefreshKeysUi(); };
-                panel.Cursor = Cursors.Hand;
-                panel.Click += open;
-                // Garantir que cliques nos filhos também abram
-                void WireClick(Control ctrl)
-                {
-                    ctrl.Cursor = Cursors.Hand;
-                    ctrl.Click += open;
+                    sig.Append('|').Append(c.Nome).Append(':').Append(statusText).Append(':').Append(disponiveis).Append('/').Append(c.NumCopias).Append(':').Append(nomeRef).Append(':').Append(minutos);
                 }
-                WireClick(lbl);
-                WireClick(status);
-                WireClick(details);
-                WireClick(disponibilidade);
 
-                // Add controls in docking order (bottom -> fill -> top -> top)
-                panel.Controls.Add(disponibilidade);
-                panel.Controls.Add(details);
-                panel.Controls.Add(status);
-                panel.Controls.Add(lbl);
-                _keysPanel.Controls.Add(panel);
+                // Acrescentar contadores para evitar rebuild quando iguais
+                sig.Append("|tot:").Append(countDisp).Append(',').Append(countRes).Append(',').Append(countUso);
 
-                // Ajusta fontes para caber no cartão sem perder o formato quadrado
-                FitCardTypography(panel, lbl, details);
+                var newSig = sig.ToString();
+                if (string.Equals(newSig, _lastKeysSignature, StringComparison.Ordinal))
+                {
+                    // Nada relevante mudou: evita rebuild para não piscar
+                    return;
+                }
+
+                _lastKeysSignature = newSig;
+
+                // 2) Reconstroi a UI somente quando a assinatura mudou
+                _keysPanel.SuspendLayout();
+                _keysPanel.Controls.Clear();
+
+                foreach (var c in chaves)
+                {
+                    // Determine status + detalhes
+                    var reservasDaChave = reservas.Where(x => x.Chave == c.Nome).ToList();
+                    var statusColor = Color.LightGreen; // Disponível
+                    var statusText = "Disponível";
+
+                    var ativa = reservasDaChave
+                        .Where(r => !r.Devolvido && r.EmUso)
+                        .OrderByDescending(r => r.DataHora)
+                        .FirstOrDefault();
+                    var reservadaHoje = reservasDaChave
+                        .Where(r => !r.Devolvido && !r.EmUso && r.DataHora.Date == nowDate)
+                        .OrderBy(r => r.DataHora)
+                        .FirstOrDefault();
+
+                    foreach (var r in reservasDaChave)
+                    {
+                        if (!r.Devolvido)
+                        {
+                            if (r.EmUso) { statusColor = Color.LightCoral; statusText = "Em Uso"; break; }
+                            else if (r.DataHora.Date == nowDate) { statusColor = Color.Khaki; statusText = "Reservado"; }
+                        }
+                    }
+
+                    // Card panel: quadrado, adapta tipografia ao conteúdo
+                    int tileSize = 180;
+                    var panel = new MedControl.UI.SquareCardPanel
+                    {
+                        SizeHint = tileSize,
+                        Width = tileSize,
+                        Height = tileSize,
+                        BackColor = GetCardColor(),
+                        BorderStyle = BorderStyle.FixedSingle,
+                        Padding = new Padding(6),
+                        Margin = new Padding(10)
+                    };
+
+                    var lbl = new Label
+                    {
+                        Text = c.Nome,
+                        Dock = DockStyle.Top,
+                        Height = 24,
+                        TextAlign = ContentAlignment.MiddleCenter,
+                        BackColor = GetCardColor(),
+                        Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                    };
+                    lbl.AutoEllipsis = true;
+                    lbl.AutoSize = false;
+
+                    var status = new Label
+                    {
+                        Text = statusText,
+                        BackColor = statusColor,
+                        Dock = DockStyle.Top,
+                        Height = 24,
+                        TextAlign = ContentAlignment.MiddleCenter,
+                        Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                    };
+                    status.Tag = "keep-backcolor keep-font";
+
+                    // details line: who and since when
+                    string detailsText = string.Empty;
+                    if ( ativa != null )
+                    {
+                        var nome = string.IsNullOrWhiteSpace(ativa.Aluno) ? ativa.Professor : ativa.Aluno;
+                        var dur = now - ativa.DataHora;
+                        string durStr = FormatDurationShort(dur);
+                        detailsText = $"Com: {nome}\nDesde: {ativa.DataHora:dd/MM HH:mm:ss} • {durStr}";
+                    }
+                    else if ( reservadaHoje != null )
+                    {
+                        var nome = string.IsNullOrWhiteSpace(reservadaHoje.Aluno) ? reservadaHoje.Professor : reservadaHoje.Aluno;
+                        detailsText = $"Reserva: {nome}\nHorário: {reservadaHoje.DataHora:HH:mm:ss}";
+                    }
+
+                    var details = new Label
+                    {
+                        Text = detailsText,
+                        Dock = DockStyle.Fill,
+                        TextAlign = ContentAlignment.MiddleCenter,
+                        BackColor = GetCardColor(),
+                        Font = new Font("Segoe UI", 9, FontStyle.Regular)
+                    };
+                    details.AutoSize = false;
+                    details.Padding = new Padding(2);
+                    details.UseMnemonic = false;
+                    details.AutoEllipsis = false; // permitir múltiplas linhas
+                    details.MaximumSize = new Size(int.MaxValue, int.MaxValue);
+
+                    // availability based on num_copias
+                    int emUsoCount = reservasDaChave.Count(r => !r.Devolvido && r.EmUso);
+                    int disponiveis = Math.Max(0, (c.NumCopias <= 0 ? 0 : c.NumCopias) - emUsoCount);
+                    var disponibilidade = new Label
+                    {
+                        Text = $"Disponíveis: {disponiveis} de {c.NumCopias}",
+                        Dock = DockStyle.Bottom,
+                        Height = 18,
+                        TextAlign = ContentAlignment.MiddleCenter,
+                        BackColor = GetCardColor(),
+                        Font = new Font("Segoe UI", 8, FontStyle.Italic)
+                    };
+
+                    // Tooltip
+                    var reservasText = string.Join("\n",
+                        reservasDaChave.Select(r =>
+                        {
+                            var nome = string.IsNullOrWhiteSpace(r.Aluno) ? r.Professor : r.Aluno;
+                            return $"{nome} - {r.DataHora:dd/MM/yyyy HH:mm:ss}";
+                        }));
+                    var statusInfo = $"Status: {statusText}" + (string.IsNullOrEmpty(reservasText) ? string.Empty : $"\nReservas:\n{reservasText}");
+                    _toolTip.SetToolTip(status, statusInfo);
+                    _toolTip.SetToolTip(panel, statusInfo);
+
+                    // Click abre relação
+                    var chaveNome = c.Nome;
+                    EventHandler open = (_, __) => { new Views.EntregasForm(chaveNome).ShowDialog(this); RefreshKeysUi(); };
+                    panel.Cursor = Cursors.Hand;
+                    panel.Click += open;
+                    void WireClick(Control ctrl) { ctrl.Cursor = Cursors.Hand; ctrl.Click += open; }
+                    WireClick(lbl); WireClick(status); WireClick(details); WireClick(disponibilidade);
+
+                    // Montagem
+                    panel.Controls.Add(disponibilidade);
+                    panel.Controls.Add(details);
+                    panel.Controls.Add(status);
+                    panel.Controls.Add(lbl);
+                    _keysPanel.Controls.Add(panel);
+
+                    // Ajuste tipográfico
+                    FitCardTypography(panel, lbl, details);
+                }
+
+                // update badges
+                _badgeDisponiveis.Text = $"Disponíveis: {countDisp}";
+                _badgeReservadas.Text = $"Reservadas: {countRes}";
+                _badgeEmUso.Text = $"Em uso: {countUso}";
+
+                _keysPanel.ResumeLayout();
             }
-
-            // update badges
-            _badgeDisponiveis.Text = $"Disponíveis: {countDisp}";
-            _badgeReservadas.Text = $"Reservadas: {countRes}";
-            _badgeEmUso.Text = $"Em uso: {countUso}";
-
-            _keysPanel.ResumeLayout();
+            catch { }
         }
 
         private void ApplyTheme()

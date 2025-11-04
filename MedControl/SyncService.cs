@@ -34,6 +34,8 @@ namespace MedControl
             public string Node { get; set; } = "?";
             public string Address { get; set; } = "?";
             public string HostHint { get; set; } = string.Empty;
+            public string Role { get; set; } = string.Empty; // "host" | "client" | "solo" | ""
+            public int HostPort { get; set; } = 0; // porta TCP do host, se Role==host
             public DateTime LastSeen { get; set; }
         }
 
@@ -108,7 +110,9 @@ namespace MedControl
             {
                 var hostHint = GetHostHint();
                 var node = Environment.MachineName;
-                var payload = $"MC|BEACON|{Group}|{node}|{hostHint}";
+                var role = GroupConfig.Mode == GroupMode.Host ? "host" : GroupConfig.Mode == GroupMode.Client ? "client" : "solo";
+                var hostPort = GroupConfig.HostPort;
+                var payload = $"MC|BEACON|{Group}|{node}|{hostHint}|{role}|{hostPort}";
                 Send(payload);
             }
             catch { }
@@ -157,6 +161,9 @@ namespace MedControl
                             {
                                 var node = parts.Length > 3 ? parts[3] : "?";
                                 var hint = parts.Length > 4 ? parts[4] : string.Empty;
+                                var role = parts.Length > 5 ? parts[5] : string.Empty;
+                                int hostPort = 0;
+                                if (parts.Length > 6) int.TryParse(parts[6], out hostPort);
                                 var addr = ep.Address.ToString();
                                 var key = node + "@" + addr;
                                 var info = _peers.AddOrUpdate(key, _ => new PeerInfo
@@ -164,12 +171,16 @@ namespace MedControl
                                     Node = node,
                                     Address = addr,
                                     HostHint = hint,
+                                    Role = role,
+                                    HostPort = hostPort,
                                     LastSeen = DateTime.UtcNow
                                 }, (_, existing) =>
                                 {
                                     existing.Node = node;
                                     existing.Address = addr;
                                     existing.HostHint = hint;
+                                    existing.Role = role;
+                                    existing.HostPort = hostPort;
                                     existing.LastSeen = DateTime.UtcNow;
                                     return existing;
                                 });
