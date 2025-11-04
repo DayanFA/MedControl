@@ -1,66 +1,240 @@
 using System;
+using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace MedControl.Views
 {
     public class ReservaForm : Form
     {
-        private ComboBox _chave = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
-    private ComboBox _aluno = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; // permite digitar
-    private ComboBox _prof = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+    private ComboBox _chave = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; // permitir digitar como Aluno/Professor
+        private ComboBox _aluno = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; // permite digitar
+        private ComboBox _prof = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
         private DateTimePicker _dataHora = new DateTimePicker { Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy HH:mm:ss", ShowUpDown = true };
-        private Button _btn = new Button { Text = "Reservar" };
+        private Button _btnSalvar = new Button();
+        private Button _btnCancelar = new Button();
 
         public ReservaForm()
         {
             Text = "Fazer Reserva";
-            Width = 420;
-            Height = 260;
-            var table = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(10) };
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 35));
-            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 65));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.White;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            AutoSize = true; AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            // Reduzir flicker geral
+            this.DoubleBuffered = true;
 
-            table.Controls.Add(new Label { Text = "Chave:" }, 0, 0);
-            table.Controls.Add(_chave, 1, 0);
-            table.Controls.Add(new Label { Text = "Aluno:" }, 0, 1);
-            table.Controls.Add(_aluno, 1, 1);
-            table.Controls.Add(new Label { Text = "Professor:" }, 0, 2);
-            table.Controls.Add(_prof, 1, 2);
-            table.Controls.Add(new Label { Text = "Data e Hora:" }, 0, 3);
-            table.Controls.Add(_dataHora, 1, 3);
-            table.Controls.Add(_btn, 1, 4);
-
-            Controls.Add(table);
-
-            Load += (_, __) =>
+            SuspendLayout();
+            var layout = new TableLayoutPanel
             {
-                _chave.Items.Clear();
-                foreach (var c in Database.GetChaves()) _chave.Items.Add(c.Nome);
-                if (_chave.Items.Count > 0) _chave.SelectedIndex = 0;
+                ColumnCount = 2,
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                Padding = new Padding(18, 18, 18, 8),
+                BackColor = Color.White
+            };
+            layout.SuspendLayout();
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-                var alunosPath = Database.GetConfig("caminho_alunos");
-                var profsPath = Database.GetConfig("caminho_professores");
-                _aluno.Items.Clear();
-                _prof.Items.Clear();
-                foreach (var a in ExcelHelper.LoadFirstColumn(alunosPath ?? string.Empty)) _aluno.Items.Add(a);
-                foreach (var p in ExcelHelper.LoadFirstColumn(profsPath ?? string.Empty)) _prof.Items.Add(p);
+            Label MkLabel(string text) => new Label
+            {
+                Text = text,
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Margin = new Padding(3, 8, 12, 8),
+                Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point)
             };
 
-            _btn.Click += (_, __) =>
+            // Fonte e dimensões dos inputs
+            var inputFont = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+            foreach (var c in new Control[] { _chave, _aluno, _prof })
             {
-                if (_chave.SelectedItem is null || (string.IsNullOrWhiteSpace(_aluno.Text) && string.IsNullOrWhiteSpace(_prof.Text)))
+                c.Font = inputFont;
+                c.Margin = new Padding(3, 8, 3, 8);
+                c.MinimumSize = new Size(260, 30);
+                c.Dock = DockStyle.Fill;
+            }
+            _dataHora.Font = inputFont;
+            _dataHora.Margin = new Padding(3, 8, 3, 8);
+            _dataHora.MinimumSize = new Size(200, 30);
+            _dataHora.Dock = DockStyle.Left;
+
+            int row = 0;
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(MkLabel("Chave"), 0, row);
+            _chave.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            _chave.AutoCompleteSource = AutoCompleteSource.ListItems;
+            layout.Controls.Add(_chave, 1, row++);
+
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(MkLabel("Aluno"), 0, row);
+            _aluno.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            _aluno.AutoCompleteSource = AutoCompleteSource.ListItems;
+            layout.Controls.Add(_aluno, 1, row++);
+
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(MkLabel("Professor"), 0, row);
+            _prof.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            _prof.AutoCompleteSource = AutoCompleteSource.ListItems;
+            layout.Controls.Add(_prof, 1, row++);
+
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(MkLabel("Data e Hora"), 0, row);
+            layout.Controls.Add(_dataHora, 1, row++);
+
+            var buttons = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.RightToLeft,
+                Dock = DockStyle.Bottom,
+                AutoSize = true,
+                Padding = new Padding(8),
+                BackColor = Color.White
+            };
+            _btnSalvar.Text = "Reservar";
+            _btnSalvar.AutoSize = true;
+            _btnSalvar.Padding = new Padding(10, 6, 10, 6);
+            _btnSalvar.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            _btnSalvar.BackColor = Color.FromArgb(0, 123, 255);
+            _btnSalvar.ForeColor = Color.White;
+            _btnSalvar.FlatStyle = FlatStyle.Flat;
+            _btnSalvar.FlatAppearance.BorderSize = 0;
+            var saveBase = _btnSalvar.BackColor;
+            _btnSalvar.MouseEnter += (_, __) => _btnSalvar.BackColor = Darken(saveBase, 12);
+            _btnSalvar.MouseLeave += (_, __) => _btnSalvar.BackColor = saveBase;
+            _btnSalvar.MouseDown += (_, __) => _btnSalvar.BackColor = Darken(saveBase, 22);
+            _btnSalvar.MouseUp += (_, __) => _btnSalvar.BackColor = Darken(saveBase, 12);
+
+            _btnCancelar.Text = "Cancelar";
+            _btnCancelar.AutoSize = true;
+            _btnCancelar.Padding = new Padding(10, 6, 10, 6);
+            _btnCancelar.Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
+
+            buttons.Controls.Add(_btnSalvar);
+            buttons.Controls.Add(_btnCancelar);
+
+            Controls.Add(layout);
+            Controls.Add(buttons);
+            layout.ResumeLayout();
+            ResumeLayout();
+
+            // Carregamento assíncrono para evitar travar a abertura do diálogo (sem placeholders para não piscar)
+            Shown += async (_, __) =>
+            {
+                // Deferir efeito visual para depois da abertura
+                try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { }
+
+                // Indica carregamento sem desabilitar inputs (evita aparência acinzentada)
+                this.UseWaitCursor = true;
+
+                var result = await Task.Run(() =>
                 {
-                    MessageBox.Show("Selecione uma chave e informe aluno ou professor.");
+                    var chaves = new System.Collections.Generic.List<string>();
+                    try
+                    {
+                        foreach (var c in Database.GetChaves()) chaves.Add(c.Nome);
+                    }
+                    catch { }
+
+                    var alunos = new System.Collections.Generic.List<string>();
+                    var alunosSeen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    try
+                    {
+                        var alunosDt = Database.GetAlunosAsDataTable();
+                        string? alunosNomeCol = null;
+                        foreach (System.Data.DataColumn col in alunosDt.Columns)
+                        {
+                            var name = col.ColumnName;
+                            if (string.Equals(name, "_id", StringComparison.OrdinalIgnoreCase)) continue;
+                            if (alunosNomeCol == null || string.Equals(name, "Nome", StringComparison.OrdinalIgnoreCase)) alunosNomeCol = name;
+                        }
+                        if (alunosNomeCol != null)
+                        {
+                            foreach (System.Data.DataRow row in alunosDt.Rows)
+                            {
+                                var val = Convert.ToString(row[alunosNomeCol]) ?? string.Empty;
+                                if (!string.IsNullOrWhiteSpace(val) && alunosSeen.Add(val)) alunos.Add(val);
+                            }
+                        }
+                        var alunosPath = Database.GetConfig("caminho_alunos");
+                        if (!string.IsNullOrWhiteSpace(alunosPath))
+                        {
+                            foreach (var a in ExcelHelper.LoadFirstColumn(alunosPath))
+                                if (alunosSeen.Add(a)) alunos.Add(a);
+                        }
+                    }
+                    catch { }
+
+                    var profs = new System.Collections.Generic.List<string>();
+                    var profsSeen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    try
+                    {
+                        var profsDt = Database.GetProfessoresAsDataTable();
+                        string? profsNomeCol = null;
+                        foreach (System.Data.DataColumn col in profsDt.Columns)
+                        {
+                            var name = col.ColumnName;
+                            if (string.Equals(name, "_id", StringComparison.OrdinalIgnoreCase)) continue;
+                            if (profsNomeCol == null || string.Equals(name, "Nome", StringComparison.OrdinalIgnoreCase)) profsNomeCol = name;
+                        }
+                        if (profsNomeCol != null)
+                        {
+                            foreach (System.Data.DataRow row in profsDt.Rows)
+                            {
+                                var val = Convert.ToString(row[profsNomeCol]) ?? string.Empty;
+                                if (!string.IsNullOrWhiteSpace(val) && profsSeen.Add(val)) profs.Add(val);
+                            }
+                        }
+                        var profsPath = Database.GetConfig("caminho_professores");
+                        if (!string.IsNullOrWhiteSpace(profsPath))
+                        {
+                            foreach (var p in ExcelHelper.LoadFirstColumn(profsPath))
+                                if (profsSeen.Add(p)) profs.Add(p);
+                        }
+                    }
+                    catch { }
+
+                    return (chaves, alunos, profs);
+                });
+
+                // Atualização única dos combos para evitar repaints múltiplos
+                _chave.BeginUpdate();
+                _aluno.BeginUpdate();
+                _prof.BeginUpdate();
+
+                _chave.DataSource = null;
+                _aluno.DataSource = null;
+                _prof.DataSource = null;
+
+                _chave.DataSource = result.chaves;
+                _aluno.DataSource = result.alunos;
+                _prof.DataSource = result.profs;
+
+                _chave.SelectedIndex = result.chaves.Count > 0 ? 0 : -1;
+                _aluno.SelectedIndex = -1; _aluno.Text = string.Empty;
+                _prof.SelectedIndex = -1; _prof.Text = string.Empty;
+
+                _chave.EndUpdate();
+                _aluno.EndUpdate();
+                _prof.EndUpdate();
+
+                this.UseWaitCursor = false;
+            };
+
+            AcceptButton = _btnSalvar;
+            CancelButton = _btnCancelar;
+
+            _btnCancelar.Click += (_, __) => { DialogResult = DialogResult.Cancel; Close(); };
+            _btnSalvar.Click += (_, __) =>
+            {
+                if (string.IsNullOrWhiteSpace(_chave.Text) || (string.IsNullOrWhiteSpace(_aluno.Text) && string.IsNullOrWhiteSpace(_prof.Text)))
+                {
+                    MessageBox.Show(this, "Selecione uma chave e informe aluno ou professor.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 var r = new Reserva
                 {
-                    Chave = _chave.SelectedItem!.ToString()!,
+                    Chave = _chave.Text.Trim(),
                     Aluno = _aluno.Text.Trim(),
                     Professor = _prof.Text.Trim(),
                     DataHora = _dataHora.Value,
@@ -70,9 +244,31 @@ namespace MedControl.Views
                     DataDevolucao = null
                 };
                 Database.InsertReserva(r);
-                MessageBox.Show($"Chave {r.Chave} reservada por {(string.IsNullOrWhiteSpace(r.Aluno) ? r.Professor : r.Aluno)} em {r.DataHora:dd/MM/yyyy HH:mm:ss}");
+                MessageBox.Show(this, $"Chave {r.Chave} reservada por {(string.IsNullOrWhiteSpace(r.Aluno) ? r.Professor : r.Aluno)} em {r.DataHora:dd/MM/yyyy HH:mm:ss}", "Reserva criada", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                DialogResult = DialogResult.OK;
                 Close();
             };
+
+            // efeito Win11 deslocado para Shown (acima) para evitar custo no momento de criação do handle
+        }
+
+        // Composição de janela para reduzir flicker em redesenho de múltiplos controles
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED
+                return cp;
+            }
+        }
+
+        private static Color Darken(Color color, int amount)
+        {
+            int r = Math.Max(0, color.R - amount);
+            int g = Math.Max(0, color.G - amount);
+            int b = Math.Max(0, color.B - amount);
+            return Color.FromArgb(color.A, r, g, b);
         }
     }
 }

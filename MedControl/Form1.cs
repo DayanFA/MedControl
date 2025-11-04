@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
+using MedControl.UI;
 
 namespace MedControl
 {
@@ -77,7 +78,7 @@ namespace MedControl
                 Padding = new Padding(0, 10, 0, 10)
             };
 
-            _keysPanel = new FlowLayoutPanel
+            _keysPanel = new DoubleBufferedFlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
@@ -125,9 +126,21 @@ namespace MedControl
             };
         }
 
+        // Composição reduz flicker de múltiplos controles ao atualizar o painel de chaves
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED
+                return cp;
+            }
+        }
+
         private void RefreshKeysUi()
         {
             _keysPanel.SuspendLayout();
+            // Evita flicker: suspende repaints do painel durante a atualização
             _keysPanel.Controls.Clear();
 
             var reservas = Database.GetReservas();
