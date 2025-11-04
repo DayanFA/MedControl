@@ -39,6 +39,20 @@ namespace MedControl
             public DateTime LastSeen { get; set; }
         }
 
+        // Nome local do nó (permite override por variável de ambiente ou config para testes)
+        public static string LocalNodeName()
+        {
+            try
+            {
+                var env = Environment.GetEnvironmentVariable("MEDCONTROL_NODE");
+                if (!string.IsNullOrWhiteSpace(env)) return env.Trim();
+                var alias = Database.GetConfig("node_alias");
+                if (!string.IsNullOrWhiteSpace(alias)) return alias.Trim();
+            }
+            catch { }
+            return Environment.MachineName;
+        }
+
         // Eventos para UI
         public static event Action? PeersChanged;
         public static event Action<string, string, DateTime, string>? OnChat; // sender, message, utc, address
@@ -94,7 +108,7 @@ namespace MedControl
             try
             {
                 if (string.IsNullOrWhiteSpace(message)) return;
-                var node = Environment.MachineName;
+                var node = LocalNodeName();
                 var id = Guid.NewGuid().ToString("N");
                 var bytes = Encoding.UTF8.GetBytes(message);
                 var b64 = Convert.ToBase64String(bytes);
@@ -109,7 +123,7 @@ namespace MedControl
             try
             {
                 var hostHint = GetHostHint();
-                var node = Environment.MachineName;
+                var node = LocalNodeName();
                 var role = GroupConfig.Mode == GroupMode.Host ? "host" : GroupConfig.Mode == GroupMode.Client ? "client" : "solo";
                 var hostPort = GroupConfig.HostPort;
                 var payload = $"MC|BEACON|{Group}|{node}|{hostHint}|{role}|{hostPort}";
@@ -209,7 +223,7 @@ namespace MedControl
 
                                 // ignora eco das próprias mensagens (já mostramos localmente)
                                 if (!string.IsNullOrWhiteSpace(sender) &&
-                                    string.Equals(sender, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+                                    string.Equals(sender, LocalNodeName(), StringComparison.OrdinalIgnoreCase))
                                 {
                                     break;
                                 }

@@ -318,6 +318,33 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             TouchChange("replace_all_chaves");
         }
 
+        // Versão local-only para sincronização inicial (não tenta enviar ao host quando em Client)
+        public static void ReplaceAllChavesLocal(System.Collections.Generic.List<Chave> chaves)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM chaves";
+                del.ExecuteNonQuery();
+            }
+
+            foreach (var c in chaves)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = "INSERT INTO chaves (nome, num_copias, descricao) VALUES (@nome,@num,@desc)";
+                AddParam(ins, "@nome", c.Nome);
+                AddParam(ins, "@num", c.NumCopias);
+                AddParam(ins, "@desc", c.Descricao ?? "");
+                ins.ExecuteNonQuery();
+            }
+            tx.Commit();
+            TouchChange("replace_all_chaves_local");
+        }
+
         public static void InsertReserva(Reserva r)
         {
             if (GroupConfig.Mode == GroupMode.Client)
@@ -473,6 +500,69 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                 });
             }
             return list;
+        }
+
+        // Substitui completamente a tabela de reservas (para sincronização inicial)
+        public static void ReplaceAllReservas(System.Collections.Generic.List<Reserva> reservas)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM reservas";
+                del.ExecuteNonQuery();
+            }
+            foreach (var r in reservas)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao)
+                                    VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd)";
+                AddParam(ins, "@ch", r.Chave);
+                AddParam(ins, "@al", r.Aluno ?? "");
+                AddParam(ins, "@pr", r.Professor ?? "");
+                AddParam(ins, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
+                AddParam(ins, "@em", r.EmUso ? 1 : 0);
+                AddParam(ins, "@te", r.Termo ?? "");
+                AddParam(ins, "@dev", r.Devolvido ? 1 : 0);
+                AddParam(ins, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+                ins.ExecuteNonQuery();
+            }
+            tx.Commit();
+            TouchChange("replace_all_reservas");
+        }
+
+        // Substitui completamente a tabela de relatorio (para sincronização inicial)
+        public static void ReplaceAllRelatorios(System.Collections.Generic.List<Relatorio> rels)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM relatorio";
+                del.ExecuteNonQuery();
+            }
+            foreach (var r in rels)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = @"INSERT INTO relatorio (chave, aluno, professor, data_hora, data_devolucao, tempo_com_chave, termo)
+                                    VALUES (@c,@a,@p,@dh,@dd,@t,@te)";
+                AddParam(ins, "@c", r.Chave);
+                AddParam(ins, "@a", r.Aluno ?? "");
+                AddParam(ins, "@p", r.Professor ?? "");
+                AddParam(ins, "@dh", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
+                AddParam(ins, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+                AddParam(ins, "@t", r.TempoComChave ?? "");
+                AddParam(ins, "@te", r.Termo ?? "");
+                ins.ExecuteNonQuery();
+            }
+            tx.Commit();
+            TouchChange("replace_all_relatorio");
         }
 
         public static void SetConfig(string chave, string valor)

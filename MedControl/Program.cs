@@ -22,6 +22,8 @@ static class Program
             try { if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Host) MedControl.GroupHost.Start(); else MedControl.GroupHost.Stop(); } catch { }
             // Inicia coordenação de papéis (host/client) com eleição automática e operação offline-first
             try { MedControl.GroupCoordinator.Start(); } catch { }
+            // Splash + pré-download de dados para uso offline
+            try { MedControl.InitialSync.RunWithUiSplash(); } catch { }
             try
             {
                 if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Client)

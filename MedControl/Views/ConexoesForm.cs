@@ -13,6 +13,7 @@ namespace MedControl.Views
         private TextBox _groupName;
         private TextBox _groupHost;
         private TextBox _groupPort;
+    private TextBox _nodeAlias;
         private Button _testConn;
         private Button _saveBtn;
         private ListView _peersList;
@@ -70,7 +71,7 @@ namespace MedControl.Views
             _lblMode = MakeInfoLabel("Modo: ...");
             _lblGroup = MakeInfoLabel("Grupo: ...");
             _lblHost = MakeInfoLabel("Host/Porta: ...");
-            _lblSelf = MakeInfoLabel($"Este PC: {Environment.MachineName}");
+            _lblSelf = MakeInfoLabel($"Este nó: {MedControl.SyncService.LocalNodeName()}");
             infoPanel.Controls.Add(_lblMode, 0, 0);
             infoPanel.Controls.Add(_lblGroup, 1, 0);
             infoPanel.Controls.Add(_lblHost, 2, 0);
@@ -90,6 +91,7 @@ namespace MedControl.Views
             _groupName = new TextBox { Dock = DockStyle.Fill };
             _groupHost = new TextBox { Dock = DockStyle.Fill };
             _groupPort = new TextBox { Dock = DockStyle.Fill };
+            _nodeAlias = new TextBox { Dock = DockStyle.Fill };
             _testConn = new Button { Text = "Testar Conexão", AutoSize = true };
             _saveBtn = new Button { Text = "Salvar", AutoSize = true };
 
@@ -109,9 +111,13 @@ namespace MedControl.Views
             cfg.Controls.Add(_groupPort, 1, 3);
             cfg.Controls.Add(new Label { Text = "(padrão 49383)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 3);
 
-            cfg.Controls.Add(new Label { Text = " " }, 0, 4);
-            cfg.Controls.Add(new Label { Text = " " }, 1, 4);
-            cfg.Controls.Add(_saveBtn, 2, 4);
+            cfg.Controls.Add(Mk("Apelido deste dispositivo:"), 0, 4);
+            cfg.Controls.Add(_nodeAlias, 1, 4);
+            cfg.Controls.Add(new Label { Text = "(opcional p/ testar em 1 PC)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
+
+            cfg.Controls.Add(new Label { Text = " " }, 0, 5);
+            cfg.Controls.Add(new Label { Text = " " }, 1, 5);
+            cfg.Controls.Add(_saveBtn, 2, 5);
 
             // Peers list
             _peersList = new ListView
@@ -236,12 +242,45 @@ namespace MedControl.Views
                 _groupName.Text = GroupConfig.GroupName;
                 _groupHost.Text = GroupConfig.HostAddress;
                 _groupPort.Text = GroupConfig.HostPort.ToString();
+                _nodeAlias.Text = Database.GetConfig("node_alias") ?? string.Empty;
             }
             catch { }
 
             _groupMode.SelectedIndexChanged += (_, __) => { ToggleGroupUi(); UpdateStatusTimerMode(); };
             _testConn.Click += (_, __) => DoTestConn();
             _saveBtn.Click += (_, __) => DoSave();
+            
+            void DoSave()
+            {
+                try
+                {
+                    var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
+                    GroupConfig.Mode = m;
+                    GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                    if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
+                    GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+                    var alias = _nodeAlias.Text?.Trim() ?? string.Empty;
+                    Database.SetConfig("node_alias", alias);
+                    try { if (m == GroupMode.Host) GroupHost.Start(); else GroupHost.Stop(); } catch { }
+
+                    // Update header labels
+                    _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
+                    _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
+                    var host = GroupConfig.Mode == GroupMode.Host ? $"localhost:{GroupConfig.HostPort}" : GroupConfig.HostAddress;
+                    if (string.IsNullOrWhiteSpace(host)) host = $"porta {GroupConfig.HostPort}";
+                    _lblHost.Text = $"Host/Porta: {host}";
+                    _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
+
+                    MessageBox.Show(this, "Conexões salvas.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                    // Restart status/ping policy based on new mode
+                    UpdateStatusTimerMode();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Erro ao salvar conexões: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
             ToggleGroupUi();
             UpdateStatusTimerMode();
 

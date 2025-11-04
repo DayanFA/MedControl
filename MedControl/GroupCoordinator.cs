@@ -45,7 +45,7 @@ namespace MedControl
                     .FirstOrDefault();
 
                 bool hasFreshHost = hostPeer != null && (now - hostPeer.LastSeen) < HostStaleAfter && hostPeer.HostPort > 0;
-                var meName = Environment.MachineName;
+                var meName = SyncService.LocalNodeName();
 
                 if (hasFreshHost)
                 {
@@ -65,12 +65,13 @@ namespace MedControl
                     }
                 }
 
-                // 2) Não há host atual: eleição determinística pelo nome do nó
-                // Inclui a si mesmo entre candidatos
+                // 2) Não há host atual: eleição determinística com prioridade "aleatória"
+                // Usa hash (SHA-256) de (group + '|' + node) para ordenar pseudo-aleatoriamente, mas de forma consistente entre nós
+                var group = GroupConfig.GroupName ?? "default";
                 var candidateNames = peers.Select(p => p.Node)
                     .Concat(new[] { meName })
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(n => RankByHash(group, n))
                     .ToArray();
                 if (candidateNames.Length == 0)
                 {
@@ -109,7 +110,7 @@ namespace MedControl
             }
         }
 
-        private static void EnsureMode(GroupMode desired, string? hostAddress)
+    private static void EnsureMode(GroupMode desired, string? hostAddress)
         {
             try
             {
@@ -152,6 +153,20 @@ namespace MedControl
                 }
             }
             catch { }
+        }
+
+        // Converte o hash para um inteiro grande para ranking ordenável; menor valor ganha
+        private static string RankByHash(string group, string node)
+        {
+            try
+            {
+                var input = System.Text.Encoding.UTF8.GetBytes(group + "|" + (node ?? ""));
+                using var sha = System.Security.Cryptography.SHA256.Create();
+                var hash = sha.ComputeHash(input);
+                // Representa como string hex para ordenar lexicograficamente
+                return BitConverter.ToString(hash).Replace("-", "");
+            }
+            catch { return node ?? ""; }
         }
     }
 }
