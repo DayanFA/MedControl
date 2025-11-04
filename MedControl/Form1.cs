@@ -241,12 +241,20 @@ namespace MedControl
 
                 _lastKeysSignature = newSig;
 
-                // 2) Reconstroi a UI somente quando a assinatura mudou
+                // 2) Atualiza a UI incrementalmente somente quando a assinatura mudou
                 _keysPanel.SuspendLayout();
-                _keysPanel.Controls.Clear();
+
+                // Mapa de painéis existentes por chave
+                var existing = _keysPanel.Controls
+                    .OfType<Panel>()
+                    .Where(p => p.Tag is string)
+                    .ToDictionary(p => (string)p.Tag!, StringComparer.OrdinalIgnoreCase);
+
+                var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var c in chaves)
                 {
+                    seen.Add(c.Nome);
                     // Determine status + detalhes
                     var reservasDaChave = reservas.Where(x => x.Chave == c.Nome).ToList();
                     var statusColor = Color.LightGreen; // Disponível
@@ -270,41 +278,95 @@ namespace MedControl
                         }
                     }
 
-                    // Card panel: quadrado, adapta tipografia ao conteúdo
+                    // Card panel: reusa se existir, senão cria
                     int tileSize = 180;
-                    var panel = new MedControl.UI.SquareCardPanel
-                    {
-                        SizeHint = tileSize,
-                        Width = tileSize,
-                        Height = tileSize,
-                        BackColor = GetCardColor(),
-                        BorderStyle = BorderStyle.FixedSingle,
-                        Padding = new Padding(6),
-                        Margin = new Padding(10)
-                    };
+                    Panel panel;
+                    Label lbl;
+                    Label status;
+                    Label details;
+                    Label disponibilidade;
 
-                    var lbl = new Label
+                    if (existing.TryGetValue(c.Nome, out var reuse))
                     {
-                        Text = c.Nome,
-                        Dock = DockStyle.Top,
-                        Height = 24,
-                        TextAlign = ContentAlignment.MiddleCenter,
-                        BackColor = GetCardColor(),
-                        Font = new Font("Segoe UI", 10, FontStyle.Bold)
-                    };
-                    lbl.AutoEllipsis = true;
-                    lbl.AutoSize = false;
+                        panel = reuse;
+                        lbl = (Label)panel.Controls["titleLabel"]!;
+                        status = (Label)panel.Controls["statusLabel"]!;
+                        details = (Label)panel.Controls["detailsLabel"]!;
+                        disponibilidade = (Label)panel.Controls["availLabel"]!;
+                    }
+                    else
+                    {
+                        panel = new MedControl.UI.SquareCardPanel
+                        {
+                            SizeHint = tileSize,
+                            Width = tileSize,
+                            Height = tileSize,
+                            BackColor = GetCardColor(),
+                            BorderStyle = BorderStyle.FixedSingle,
+                            Padding = new Padding(6),
+                            Margin = new Padding(10),
+                            Tag = c.Nome
+                        };
 
-                    var status = new Label
-                    {
-                        Text = statusText,
-                        BackColor = statusColor,
-                        Dock = DockStyle.Top,
-                        Height = 24,
-                        TextAlign = ContentAlignment.MiddleCenter,
-                        Font = new Font("Segoe UI", 10, FontStyle.Bold)
-                    };
-                    status.Tag = "keep-backcolor keep-font";
+                        lbl = new Label
+                        {
+                            Name = "titleLabel",
+                            Dock = DockStyle.Top,
+                            Height = 24,
+                            TextAlign = ContentAlignment.MiddleCenter,
+                            BackColor = GetCardColor(),
+                            Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                        };
+                        lbl.AutoEllipsis = true;
+                        lbl.AutoSize = false;
+
+                        status = new Label
+                        {
+                            Name = "statusLabel",
+                            Dock = DockStyle.Top,
+                            Height = 24,
+                            TextAlign = ContentAlignment.MiddleCenter,
+                            Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                        };
+                        status.Tag = "keep-backcolor keep-font";
+                        details = new Label
+                        {
+                            Name = "detailsLabel",
+                            Dock = DockStyle.Fill,
+                            TextAlign = ContentAlignment.MiddleCenter,
+                            BackColor = GetCardColor(),
+                            Font = new Font("Segoe UI", 9, FontStyle.Regular)
+                        };
+                        details.AutoSize = false;
+                        details.Padding = new Padding(2);
+                        details.UseMnemonic = false;
+                        details.AutoEllipsis = false;
+                        details.MaximumSize = new Size(int.MaxValue, int.MaxValue);
+
+                        disponibilidade = new Label
+                        {
+                            Name = "availLabel",
+                            Dock = DockStyle.Bottom,
+                            Height = 18,
+                            TextAlign = ContentAlignment.MiddleCenter,
+                            BackColor = GetCardColor(),
+                            Font = new Font("Segoe UI", 8, FontStyle.Italic)
+                        };
+
+                        // Montagem
+                        panel.Controls.Add(disponibilidade);
+                        panel.Controls.Add(details);
+                        panel.Controls.Add(status);
+                        panel.Controls.Add(lbl);
+                        _keysPanel.Controls.Add(panel);
+
+                        // Clique abre relação
+                        var chaveNome = c.Nome;
+                        EventHandler open = (_, __) => { new Views.EntregasForm(chaveNome).ShowDialog(this); RefreshKeysUi(); };
+                        void WireClick(Control ctrl) { ctrl.Cursor = Cursors.Hand; ctrl.Click += open; }
+                        panel.Cursor = Cursors.Hand;
+                        WireClick(panel); WireClick(lbl); WireClick(status); WireClick(details); WireClick(disponibilidade);
+                    }
 
                     // details line: who and since when
                     string detailsText = string.Empty;
@@ -321,32 +383,15 @@ namespace MedControl
                         detailsText = $"Reserva: {nome}\nHorário: {reservadaHoje.DataHora:HH:mm:ss}";
                     }
 
-                    var details = new Label
-                    {
-                        Text = detailsText,
-                        Dock = DockStyle.Fill,
-                        TextAlign = ContentAlignment.MiddleCenter,
-                        BackColor = GetCardColor(),
-                        Font = new Font("Segoe UI", 9, FontStyle.Regular)
-                    };
-                    details.AutoSize = false;
-                    details.Padding = new Padding(2);
-                    details.UseMnemonic = false;
-                    details.AutoEllipsis = false; // permitir múltiplas linhas
-                    details.MaximumSize = new Size(int.MaxValue, int.MaxValue);
-
+                    // Update contents (sem recriar)
+                    lbl.Text = c.Nome;
+                    status.Text = statusText;
+                    status.BackColor = statusColor;
+                    details.Text = detailsText;
                     // availability based on num_copias
                     int emUsoCount = reservasDaChave.Count(r => !r.Devolvido && r.EmUso);
                     int disponiveis = Math.Max(0, (c.NumCopias <= 0 ? 0 : c.NumCopias) - emUsoCount);
-                    var disponibilidade = new Label
-                    {
-                        Text = $"Disponíveis: {disponiveis} de {c.NumCopias}",
-                        Dock = DockStyle.Bottom,
-                        Height = 18,
-                        TextAlign = ContentAlignment.MiddleCenter,
-                        BackColor = GetCardColor(),
-                        Font = new Font("Segoe UI", 8, FontStyle.Italic)
-                    };
+                    disponibilidade.Text = $"Disponíveis: {disponiveis} de {c.NumCopias}";
 
                     // Tooltip
                     var reservasText = string.Join("\n",
@@ -359,23 +404,18 @@ namespace MedControl
                     _toolTip.SetToolTip(status, statusInfo);
                     _toolTip.SetToolTip(panel, statusInfo);
 
-                    // Click abre relação
-                    var chaveNome = c.Nome;
-                    EventHandler open = (_, __) => { new Views.EntregasForm(chaveNome).ShowDialog(this); RefreshKeysUi(); };
-                    panel.Cursor = Cursors.Hand;
-                    panel.Click += open;
-                    void WireClick(Control ctrl) { ctrl.Cursor = Cursors.Hand; ctrl.Click += open; }
-                    WireClick(lbl); WireClick(status); WireClick(details); WireClick(disponibilidade);
-
-                    // Montagem
-                    panel.Controls.Add(disponibilidade);
-                    panel.Controls.Add(details);
-                    panel.Controls.Add(status);
-                    panel.Controls.Add(lbl);
-                    _keysPanel.Controls.Add(panel);
-
                     // Ajuste tipográfico
                     FitCardTypography(panel, lbl, details);
+                }
+
+                // Remove painéis de chaves que não existem mais
+                foreach (var ctrl in _keysPanel.Controls.OfType<Panel>().ToArray())
+                {
+                    if (ctrl.Tag is string key && !seen.Contains(key))
+                    {
+                        _keysPanel.Controls.Remove(ctrl);
+                        try { ctrl.Dispose(); } catch { }
+                    }
                 }
 
                 // update badges

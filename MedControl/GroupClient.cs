@@ -8,6 +8,25 @@ namespace MedControl
 {
     public static class GroupClient
     {
+        // Garante que a UI não trave tentando host indisponível repetidamente
+        private static DateTime _lastFailUtc = DateTime.MinValue;
+        private static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(10);
+
+        public static bool ShouldTryRemote()
+        {
+            try { return (DateTime.UtcNow - _lastFailUtc) > RetryAfter; } catch { return true; }
+        }
+
+        private static void MarkFail()
+        {
+            try { _lastFailUtc = DateTime.UtcNow; } catch { }
+        }
+
+        private static void MarkSuccess()
+        {
+            try { _lastFailUtc = DateTime.MinValue; } catch { }
+        }
+
         private static TcpClient ConnectWithTimeout(string hostOnly, int port, int timeoutMs)
         {
             var c = new TcpClient();
@@ -20,34 +39,43 @@ namespace MedControl
             return c;
         }
 
-        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 1500)
+        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 600)
         {
-            var host = GroupConfig.HostAddress;
-            var port = GroupConfig.HostPort;
-            var parts = host.Split(':');
-            string hostOnly = parts[0];
-            if (parts.Length > 1 && int.TryParse(parts[1], out var p)) port = p;
+            try
+            {
+                var host = GroupConfig.HostAddress;
+                var port = GroupConfig.HostPort;
+                var parts = host.Split(':');
+                string hostOnly = parts[0];
+                if (parts.Length > 1 && int.TryParse(parts[1], out var p)) port = p;
 
-            using var c = ConnectWithTimeout(hostOnly, port, connectTimeoutMs);
-            c.ReceiveTimeout = 3000; c.SendTimeout = 3000;
-            using var ns = c.GetStream();
-            using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
-            using var reader = new StreamReader(ns, Encoding.UTF8, false);
-            var json = JsonSerializer.Serialize(req);
-            writer.WriteLine(json);
-            var line = reader.ReadLine();
-            if (string.IsNullOrWhiteSpace(line)) return (false, "empty response", null);
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-            var ok = root.GetProperty("ok").GetBoolean();
-            string? err = root.TryGetProperty("error", out var e) ? e.GetString() : null;
-            string? data = root.TryGetProperty("data", out var d) ? d.GetRawText() : null;
-            return (ok, err, data);
+                using var c = ConnectWithTimeout(hostOnly, port, connectTimeoutMs);
+                c.ReceiveTimeout = 1200; c.SendTimeout = 1200;
+                using var ns = c.GetStream();
+                using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
+                using var reader = new StreamReader(ns, Encoding.UTF8, false);
+                var json = JsonSerializer.Serialize(req);
+                writer.WriteLine(json);
+                var line = reader.ReadLine();
+                if (string.IsNullOrWhiteSpace(line)) { MarkFail(); return (false, "empty response", null); }
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                var ok = root.GetProperty("ok").GetBoolean();
+                string? err = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+                string? data = root.TryGetProperty("data", out var d) ? d.GetRawText() : null;
+                if (ok) MarkSuccess(); else MarkFail();
+                return (ok, err, data);
+            }
+            catch
+            {
+                MarkFail();
+                throw;
+            }
         }
 
         public static bool Ping(out string? message)
         {
-            try { var r = Send(new { type = "ping" }); message = r.data; return r.ok; } catch (Exception ex) { message = ex.Message; return false; }
+            try { var r = Send(new { type = "ping" }); if (r.ok) MarkSuccess(); else MarkFail(); message = r.data; return r.ok; } catch (Exception ex) { message = ex.Message; MarkFail(); return false; }
         }
 
         // Encaminhadores de escrita
