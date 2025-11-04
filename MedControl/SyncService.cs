@@ -78,7 +78,7 @@ namespace MedControl
                 _listenThread = new Thread(ListenLoop) { IsBackground = true, Name = "SyncService.Listen" };
                 _listenThread.Start();
 
-                _beaconTimer = new System.Threading.Timer(_ => SendBeacon(), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(20));
+                _beaconTimer = new System.Threading.Timer(_ => SendBeacon(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
                 // envia um beacon inicial
                 SendBeacon();
             }
@@ -138,6 +138,12 @@ namespace MedControl
                 Send(payload);
             }
             catch { }
+        }
+
+        // Força o envio imediato de um beacon (usado após mudança de papel Host/Client)
+        public static void ForceBeacon()
+        {
+            try { SendBeacon(); } catch { }
         }
 
         private static void Send(string payload)

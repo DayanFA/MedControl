@@ -14,13 +14,13 @@ namespace MedControl
         private static readonly object _lock = new();
         private static DateTime _lastRoleChange = DateTime.MinValue;
         private static readonly TimeSpan RoleChangeCooldown = TimeSpan.FromSeconds(10);
-        private static readonly TimeSpan HostStaleAfter = TimeSpan.FromSeconds(35);
+    private static readonly TimeSpan HostStaleAfter = TimeSpan.FromSeconds(12);
 
         public static void Start()
         {
             try
             {
-                _timer = new System.Threading.Timer(_ => Evaluate(), null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(7));
+                _timer = new System.Threading.Timer(_ => Evaluate(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
             }
             catch { }
         }
@@ -150,6 +150,7 @@ namespace MedControl
                     // Notifica mudança para telas atualizarem
                     try { Database.SetConfig("last_change_reason", "role_change"); } catch { }
                     try { SyncService.NotifyChange(); } catch { }
+                    try { SyncService.ForceBeacon(); } catch { }
                 }
             }
             catch { }
