@@ -266,6 +266,31 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             cmd.ExecuteNonQuery();
         }
 
+        public static void ReplaceAllChaves(System.Collections.Generic.List<Chave> chaves)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM chaves";
+                del.ExecuteNonQuery();
+            }
+
+            foreach (var c in chaves)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = "INSERT INTO chaves (nome, num_copias, descricao) VALUES (@nome,@num,@desc)";
+                AddParam(ins, "@nome", c.Nome);
+                AddParam(ins, "@num", c.NumCopias);
+                AddParam(ins, "@desc", c.Descricao ?? "");
+                ins.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+
         public static void InsertReserva(Reserva r)
         {
             using var conn = CreateConnection();

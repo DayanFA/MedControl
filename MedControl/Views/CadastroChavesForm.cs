@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.IO;
 using System.Windows.Forms;
 
 namespace MedControl.Views
@@ -18,6 +20,8 @@ namespace MedControl.Views
     private readonly FlowLayoutPanel _top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 64, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(8) };
     private readonly TextBox _search = new TextBox { Width = 300, PlaceholderText = "Pesquisar... 🔎" };
     private readonly Button _btnAdd = new Button();
+    private readonly Button _btnImport = new Button();
+    private readonly Button _btnExport = new Button();
     private readonly Button _btnEdit = new Button();
     private readonly Button _btnDel = new Button();
 
@@ -42,12 +46,16 @@ namespace MedControl.Views
 
             // Top actions with emoji and square buttons
             ConfigureActionButton(_btnAdd, "➕ Adicionar", Color.FromArgb(0, 123, 255));
+            ConfigureActionButton(_btnImport, "⬇️ Upload", Color.FromArgb(33, 150, 243));
+            ConfigureActionButton(_btnExport, "📤 Exportar", Color.FromArgb(76, 175, 80));
             // Remover botões de Editar/Excluir do topo (já existem no grid)
             _btnEdit.Visible = false;
             _btnDel.Visible = false;
             _btnAdd.Click += (_, __) => AddChave();
+            _btnImport.Click += (_, __) => ImportChavesFromExcel();
+            _btnExport.Click += (_, __) => ExportChavesToExcel();
             var actions = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(4), Margin = new Padding(0, 6, 0, 6) };
-            actions.Controls.AddRange(new Control[] { _btnAdd });
+            actions.Controls.AddRange(new Control[] { _btnAdd, _btnImport, _btnExport });
             _top.Controls.Add(actions);
             // Search aligned with buttons
             _search.Font = new Font("Segoe UI", 10F);
@@ -113,6 +121,108 @@ namespace MedControl.Views
             _grid.DataSource = _bs;
             EnsureActionColumnsAtEnd();
             UpdatePaginationControls();
+        }
+
+        private static string NormalizeHeader(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            s = s.Trim().ToLowerInvariant();
+            // remove acentos simples
+            s = s
+                .Replace("á", "a").Replace("à", "a").Replace("ã", "a").Replace("â", "a")
+                .Replace("é", "e").Replace("ê", "e")
+                .Replace("í", "i")
+                .Replace("ó", "o").Replace("õ", "o").Replace("ô", "o")
+                .Replace("ú", "u")
+                .Replace("ç", "c");
+            s = new string(s.Where(ch => char.IsLetterOrDigit(ch) || ch == ' ').ToArray());
+            s = s.Replace("  ", " ");
+            return s;
+        }
+
+        private void ImportChavesFromExcel()
+        {
+            using var ofd = new OpenFileDialog { Filter = "Excel (*.xlsx)|*.xlsx" };
+            if (ofd.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                UseWaitCursor = true; Enabled = false;
+                var dt = ExcelHelper.LoadToDataTable(ofd.FileName);
+                if (dt.Columns.Count == 0)
+                {
+                    throw new Exception("Planilha vazia ou inválida.");
+                }
+
+                // Mapear colunas por nome normalizado
+                int? idxNome = null, idxNum = null, idxDesc = null;
+                for (int i = 0; i < dt.Columns.Count; i++)
+                {
+                    var norm = NormalizeHeader(dt.Columns[i].ColumnName);
+                    if (idxNome == null && (norm == "nome")) idxNome = i;
+                    else if (idxNum == null && (norm == "numero de copias" || norm == "numerodecopias" || norm == "num de copias" || norm == "qtd de copias")) idxNum = i;
+                    else if (idxDesc == null && (norm == "descricao" || norm == "descrição" || norm == "descricao/observacao")) idxDesc = i; // aceitar variações
+                }
+
+                if (idxNome == null)
+                    throw new Exception("A planilha deve conter a coluna 'Nome'. As colunas esperadas são: Nome, Número de Cópias, Descrição.");
+
+                int imported = 0;
+                foreach (DataRow r in dt.Rows)
+                {
+                    var nome = Convert.ToString(r[(int)idxNome])?.Trim() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(nome)) continue; // ignora linhas vazias
+                    int num = 0;
+                    if (idxNum != null)
+                    {
+                        var raw = Convert.ToString(r[(int)idxNum])?.Trim() ?? "0";
+                        int.TryParse(raw, out num);
+                    }
+                    var desc = idxDesc != null ? (Convert.ToString(r[(int)idxDesc]) ?? string.Empty) : string.Empty;
+                    var c = new Chave { Nome = nome, NumCopias = num, Descricao = desc };
+                    try { Database.UpsertChave(c); imported++; } catch { }
+                }
+
+                // Atualiza lista e UI
+                ReloadFromDb();
+                ApplyFilterAndRefresh();
+                try { Database.SetConfig("caminho_chaves", ofd.FileName); } catch { }
+                try { MessageBox.Show(this, $"Importação concluída. {imported} registro(s) processado(s).", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { }
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show(this, "Falha ao importar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+            }
+            finally
+            {
+                Enabled = true; UseWaitCursor = false;
+            }
+        }
+
+        private void ExportChavesToExcel()
+        {
+            using var sfd = new SaveFileDialog { Filter = "Excel (*.xlsx)|*.xlsx", FileName = "cadastro_chaves.xlsx" };
+            if (sfd.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                var dt = new DataTable();
+                dt.Columns.Add("Nome");
+                dt.Columns.Add("Número de Cópias");
+                dt.Columns.Add("Descrição");
+                foreach (var c in _all.OrderBy(x => x.Nome))
+                {
+                    var row = dt.NewRow();
+                    row[0] = c.Nome ?? string.Empty;
+                    row[1] = c.NumCopias;
+                    row[2] = c.Descricao ?? string.Empty;
+                    dt.Rows.Add(row);
+                }
+                ExcelHelper.SaveDataTable(sfd.FileName, dt);
+                try { MessageBox.Show(this, "Exportado com sucesso.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { }
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show(this, "Falha ao exportar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+            }
         }
 
         private void AddChave()
