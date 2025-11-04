@@ -10,6 +10,11 @@
     <RootNamespace>MedControl</RootNamespace>
     <!-- Ícone do aplicativo (condicional). Coloque um arquivo em Assets/app.ico para aplicar ao executável -->
     <ApplicationIcon Condition="Exists('Assets\\app.ico')">Assets\app.ico</ApplicationIcon>
+    <!-- Versão do aplicativo (altere a cada release) -->
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

@@ -44,6 +44,8 @@ static class Program
                 Application.VisualStyleState = System.Windows.Forms.VisualStyles.VisualStyleState.ClientAndNonClientAreasEnabled;
         }
         catch { }
+        // Checagem de atualização (silenciosa) em background
+        try { MedControl.UpdateService.CheckSilentlyInBackground(); } catch { }
     Application.Run(new Form1());
     try { MedControl.GroupCoordinator.Stop(); } catch { }
     try { MedControl.GroupHost.Stop(); } catch { }
