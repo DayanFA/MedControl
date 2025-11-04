@@ -42,7 +42,8 @@ namespace MedControl.Views
             // Grid visuals (modern look similar to Alunos)
             _grid.AllowUserToAddRows = false;
             _grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
-            _grid.ReadOnly = true;
+            // permitir edição inline nas células (exceto colunas de ação e _id)
+            _grid.ReadOnly = false;
             _grid.RowHeadersVisible = false;
             _grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             _grid.BorderStyle = BorderStyle.None;
@@ -57,6 +58,7 @@ namespace MedControl.Views
             _grid.AlternatingRowsDefaultCellStyle.BackColor = Color.White;
             _grid.RowTemplate.Height = 34;
             _grid.ColumnHeaderMouseClick += (_, e) => OnHeaderClick(e.ColumnIndex);
+            _grid.CellEndEdit += Grid_CellEndEdit;
 
             Controls.Add(_grid);
             Controls.Add(_top);
@@ -164,7 +166,70 @@ namespace MedControl.Views
             _bottomBar.Controls.Add(_pagesPanel);
             // Use apenas CellContentClick para botões; evitar duplicidade com CellClick
             _grid.CellContentClick += Grid_CellClick;
-            _grid.DataBindingComplete += (_, __) => EnsureActionColumnsAtEnd();
+            _grid.DataBindingComplete += (_, __) => { EnsureActionColumnsAtEnd(); ApplyReadOnlyRules(); };
+        }
+
+        private void Grid_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+            var col = _grid.Columns[e.ColumnIndex];
+            var colName = col.DataPropertyName ?? col.Name ?? col.HeaderText;
+            if (string.IsNullOrEmpty(colName)) return;
+            if (colName == "EDITAR" || colName == "EXCLUIR" || string.Equals(colName, "_id", StringComparison.OrdinalIgnoreCase)) return;
+
+            var row = GetDataRowFromGridRow(e.RowIndex);
+            if (row == null) return;
+
+            var newVal = _grid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value?.ToString() ?? string.Empty;
+            row[colName] = newVal;
+            try
+            {
+                var id = Convert.ToString(row["_id"]) ?? Guid.NewGuid().ToString();
+                var data = BuildDictFromRow(row);
+                Database.UpsertProfessor(id, data);
+                // Evita reentrância do DataGridView (mudar DataSource dentro do evento de edição)
+                BeginInvoke(new Action(() => ReloadFromDatabase()));
+            }
+            catch
+            {
+                // Defer também em caso de erro para evitar conflitos com o ciclo de edição
+                BeginInvoke(new Action(() => ApplyFilterAndRefresh()));
+            }
+        }
+
+        private DataRow? GetDataRowFromGridRow(int gridRowIndex)
+        {
+            if (gridRowIndex < 0 || gridRowIndex >= _grid.Rows.Count) return null;
+            var gridRow = _grid.Rows[gridRowIndex];
+            // Localiza coluna do _id (mesmo oculta)
+            DataGridViewColumn? idCol = null;
+            foreach (DataGridViewColumn c in _grid.Columns)
+            {
+                if (string.Equals(c.DataPropertyName, "_id", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.Name, "_id", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(c.HeaderText, "_id", StringComparison.OrdinalIgnoreCase))
+                { idCol = c; break; }
+            }
+            if (idCol == null) return null;
+            var val = gridRow.Cells[idCol.Index].Value;
+            var id = val?.ToString();
+            if (string.IsNullOrEmpty(id)) return null;
+            return _table.AsEnumerable().FirstOrDefault(r => Convert.ToString(r["_id"]) == id);
+        }
+
+        private void ApplyReadOnlyRules()
+        {
+            try
+            {
+                foreach (DataGridViewColumn c in _grid.Columns)
+                {
+                    if (c.Name == "EDITAR" || c.Name == "EXCLUIR" || string.Equals(c.Name, "_id", StringComparison.OrdinalIgnoreCase))
+                        c.ReadOnly = true;
+                    else
+                        c.ReadOnly = false;
+                }
+            }
+            catch { }
         }
 
         private void ConfigureActionButton(Button btn, string text, Color baseCol)

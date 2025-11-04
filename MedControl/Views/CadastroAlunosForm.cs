@@ -834,6 +834,8 @@ namespace MedControl.Views
                     UseWaitCursor = true;
                     Enabled = false;
                     _fullTable = ExcelHelper.LoadToDataTable(ofd.FileName);
+                    // Persistir caminho escolhido para aparecer em Configurações
+                    try { Database.SetConfig("caminho_alunos", ofd.FileName); } catch { }
                     if (!_fullTable.Columns.Contains("_id"))
                     {
                         _fullTable.Columns.Add("_id", typeof(string));
