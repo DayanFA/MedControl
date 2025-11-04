@@ -258,15 +258,24 @@ namespace MedControl.Views
                 try
                 {
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
-                    GroupConfig.Mode = m;
+                    // Sempre atualiza host/porta/nome/alias a partir dos campos
                     GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
                     if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
                     GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
                     var alias = _nodeAlias.Text?.Trim() ?? string.Empty;
                     Database.SetConfig("node_alias", alias);
+
+                    if (m == GroupMode.Client)
+                    {
+                        // No modo Cliente, ao salvar já executa a sincronização com loading
+                        DoConnect();
+                        return;
+                    }
+
+                    // Para Host/Offline: aplica e salva normalmente
+                    GroupConfig.Mode = m;
                     try { if (m == GroupMode.Host) GroupHost.Start(); else GroupHost.Stop(); } catch { }
 
-                    // Update header labels
                     _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
                     _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
                     var host = GroupConfig.Mode == GroupMode.Host ? $"localhost:{GroupConfig.HostPort}" : GroupConfig.HostAddress;
@@ -275,8 +284,6 @@ namespace MedControl.Views
                     _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
 
                     MessageBox.Show(this, "Conexões salvas.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                    // Restart status/ping policy based on new mode
                     UpdateStatusTimerMode();
                 }
                 catch (Exception ex)
@@ -630,6 +637,20 @@ namespace MedControl.Views
                 _chatLog.SelectionColor = Color.Black;
                 _chatLog.AppendText($": {message}\n");
                 _chatLog.ScrollToCaret();
+
+                // Evita crescimento infinito: mantém até ~500 linhas
+                try
+                {
+                    var lines = _chatLog.Lines;
+                    if (lines != null && lines.Length > 500)
+                    {
+                        var keep = lines.Skip(lines.Length - 500).ToArray();
+                        _chatLog.Lines = keep;
+                        _chatLog.SelectionStart = _chatLog.TextLength;
+                        _chatLog.ScrollToCaret();
+                    }
+                }
+                catch { }
             }
             catch { }
         }

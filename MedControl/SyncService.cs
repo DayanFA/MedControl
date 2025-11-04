@@ -98,7 +98,11 @@ namespace MedControl
             try
             {
                 var payload = $"MC|CHANGE|{Group}|{DateTime.UtcNow:o}";
-                Send(payload);
+                // Dispara em background para não bloquear UI
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try { Send(payload); } catch { }
+                });
             }
             catch { }
         }
@@ -113,7 +117,11 @@ namespace MedControl
                 var bytes = Encoding.UTF8.GetBytes(message);
                 var b64 = Convert.ToBase64String(bytes);
                 var payload = $"MC|CHAT|{Group}|{node}|{id}|{b64}";
-                Send(payload);
+                // Dispara em background para não bloquear UI
+                System.Threading.Tasks.Task.Run(() =>
+                {
+                    try { Send(payload); } catch { }
+                });
             }
             catch { }
         }
@@ -139,10 +147,10 @@ namespace MedControl
                 var data = Encoding.UTF8.GetBytes(payload);
                 using var c = new UdpClient();
                 c.EnableBroadcast = true;
-                try { c.JoinMulticastGroup(MulticastIp); } catch { }
-                c.Send(data, data.Length, new IPEndPoint(MulticastIp, Port));
+                // Não é necessário ingressar no grupo para enviar para multicast
+                try { c.Send(data, data.Length, new IPEndPoint(MulticastIp, Port)); } catch { }
                 // opcional: também por broadcast
-                c.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, Port));
+                try { c.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, Port)); } catch { }
             }
             catch { }
         }
