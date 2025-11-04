@@ -4,12 +4,18 @@ using System;
 using System.Collections.Generic;
 using System.Data.Common;
 using System.IO;
+using System.Windows.Forms;
 
 namespace MedControl
 {
     public static class Database
     {
         private static readonly string DbPath = GetSqlitePath();
+
+        private static bool IsUiThread()
+        {
+            try { return Application.MessageLoop; } catch { return false; }
+        }
 
         private static string GetSqlitePath()
         {
@@ -216,7 +222,7 @@ namespace MedControl
 
         public static List<Chave> GetChaves()
         {
-            if (GroupConfig.Mode == GroupMode.Client && GroupClient.ShouldTryRemote())
+            if (GroupConfig.Mode == GroupMode.Client && !IsUiThread() && GroupClient.ShouldTryRemote())
             {
                 try { return GroupClient.PullChaves(); } catch { /* fallback local */ }
             }
@@ -411,7 +417,7 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
 
         public static List<Reserva> GetReservas()
         {
-            if (GroupConfig.Mode == GroupMode.Client && GroupClient.ShouldTryRemote())
+            if (GroupConfig.Mode == GroupMode.Client && !IsUiThread() && GroupClient.ShouldTryRemote())
             {
                 try { return GroupClient.PullReservas(); } catch { /* fallback local */ }
             }
@@ -469,7 +475,7 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
 
         public static List<Relatorio> GetRelatorios()
         {
-            if (GroupConfig.Mode == GroupMode.Client && GroupClient.ShouldTryRemote())
+            if (GroupConfig.Mode == GroupMode.Client && !IsUiThread() && GroupClient.ShouldTryRemote())
             {
                 try { return GroupClient.PullRelatorio(); } catch { /* fallback local */ }
             }
@@ -599,7 +605,7 @@ ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor";
         // ===== Alunos (tabela flexível com dados em JSON) =====
         public static System.Data.DataTable GetAlunosAsDataTable()
         {
-            if (GroupConfig.Mode == GroupMode.Client && GroupClient.ShouldTryRemote())
+            if (GroupConfig.Mode == GroupMode.Client && !IsUiThread() && GroupClient.ShouldTryRemote())
             {
                 try { return GroupClient.PullAlunos(); } catch { /* fallback local */ }
             }
@@ -735,7 +741,7 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
         // ===== Professores (mesmo modelo flexível em JSON) =====
         public static System.Data.DataTable GetProfessoresAsDataTable()
         {
-            if (GroupConfig.Mode == GroupMode.Client && GroupClient.ShouldTryRemote())
+            if (GroupConfig.Mode == GroupMode.Client && !IsUiThread() && GroupClient.ShouldTryRemote())
             {
                 try { return GroupClient.PullProfessores(); } catch { /* fallback local */ }
             }

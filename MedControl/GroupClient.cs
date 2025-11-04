@@ -39,7 +39,7 @@ namespace MedControl
             return c;
         }
 
-        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 600)
+        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 200)
         {
             try
             {
@@ -50,7 +50,8 @@ namespace MedControl
                 if (parts.Length > 1 && int.TryParse(parts[1], out var p)) port = p;
 
                 using var c = ConnectWithTimeout(hostOnly, port, connectTimeoutMs);
-                c.ReceiveTimeout = 1200; c.SendTimeout = 1200;
+                c.NoDelay = true;
+                c.ReceiveTimeout = 300; c.SendTimeout = 300;
                 using var ns = c.GetStream();
                 using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
                 using var reader = new StreamReader(ns, Encoding.UTF8, false);
@@ -75,7 +76,7 @@ namespace MedControl
 
         public static bool Ping(out string? message)
         {
-            try { var r = Send(new { type = "ping" }); if (r.ok) MarkSuccess(); else MarkFail(); message = r.data; return r.ok; } catch (Exception ex) { message = ex.Message; MarkFail(); return false; }
+            try { var r = Send(new { type = "ping" }, connectTimeoutMs: 150); if (r.ok) MarkSuccess(); else MarkFail(); message = r.data; return r.ok; } catch (Exception ex) { message = ex.Message; MarkFail(); return false; }
         }
 
         // Encaminhadores de escrita
