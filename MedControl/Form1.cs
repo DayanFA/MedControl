@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using MedControl.UI;
 
@@ -18,6 +19,9 @@ namespace MedControl
     private Label _badgeDisponiveis;
     private Label _badgeReservadas;
     private Label _badgeEmUso;
+    private ToolStripLabel _statusDot;
+    private ToolStripLabel _statusText;
+    private System.Windows.Forms.Timer? _statusTimer;
 
         public Form1()
         {
@@ -49,11 +53,31 @@ namespace MedControl
                 ApplyTheme();
                 RefreshKeysUi();
             });
+            configuracoes.DropDownItems.Add("Conexões (Chat)", null, (_, __) =>
+            {
+                new Views.ConexoesForm().ShowDialog(this);
+            });
 
             var ajuda = new ToolStripMenuItem("Ajuda");
             ajuda.DropDownItems.Add("Sobre", null, (_, __) => new Views.AjudaForm().ShowDialog(this));
 
             _menu.Items.AddRange(new ToolStripItem[] { cadastro, chave, relatorio, configuracoes, ajuda });
+            _statusText = new ToolStripLabel(" verificando...")
+            {
+                Alignment = ToolStripItemAlignment.Right,
+                Margin = new Padding(2, 0, 0, 0),
+                BackColor = Color.Transparent,
+                ForeColor = Color.Black
+            };
+            _statusDot = new ToolStripLabel("●")
+            {
+                Alignment = ToolStripItemAlignment.Right,
+                Margin = new Padding(12, 0, 0, 0),
+                BackColor = Color.Transparent,
+                ForeColor = Color.Gray
+            };
+            _menu.Items.Add(_statusText);
+            _menu.Items.Add(_statusDot);
             MainMenuStrip = _menu;
             Controls.Add(_menu);
 
@@ -123,6 +147,14 @@ namespace MedControl
             {
                 ApplyTheme();
                 RefreshKeysUi();
+                try
+                {
+                    _statusTimer = new System.Windows.Forms.Timer { Interval = 7000 };
+                    _statusTimer.Tick += (_, __) => UpdateConnectionStatus(false);
+                    _statusTimer.Start();
+                    UpdateConnectionStatus(true);
+                }
+                catch { }
             };
         }
 
@@ -354,6 +386,66 @@ namespace MedControl
             {
                 try { ThemeHelper.ApplyCurrentTheme(this); } catch { }
             }
+        }
+
+        private void UpdateConnectionStatus(bool immediate)
+        {
+            try
+            {
+                var mode = GroupConfig.Mode;
+                if (mode == GroupMode.Client)
+                {
+                    SetStatusLabel(null, "Cliente");
+                    // Non-blocking ping
+                    Task.Run(() =>
+                    {
+                        bool ok; string? msg;
+                        try { ok = GroupClient.Ping(out msg); }
+                        catch (Exception ex) { ok = false; msg = ex.Message; }
+                        try
+                        {
+                            if (IsHandleCreated)
+                                BeginInvoke(new Action(() => SetStatusLabel(ok, ok ? "Cliente" : ("Offline" + (string.IsNullOrWhiteSpace(msg) ? string.Empty : " – " + msg)))));
+                        }
+                        catch { }
+                    });
+                }
+                else if (mode == GroupMode.Host)
+                {
+                    SetStatusLabel(true, "Host");
+                }
+                else
+                {
+                    SetStatusLabel(false, "Offline");
+                }
+            }
+            catch { }
+        }
+
+        private void SetStatusLabel(bool? online, string? detail)
+        {
+            try
+            {
+                if (_statusDot == null || _statusText == null) return;
+                if (online == null)
+                {
+                    _statusDot.Text = "●";
+                    _statusDot.ForeColor = Color.Gray;
+                    _statusDot.BackColor = Color.Transparent;
+                    _statusText.Text = " verificando...";
+                    _statusText.ForeColor = Color.Black;
+                    _statusText.BackColor = Color.Transparent;
+                    return;
+                }
+                var isOn = online.Value;
+                _statusDot.Text = "●";
+                _statusDot.ForeColor = isOn ? Color.LimeGreen : Color.Red;
+                _statusDot.BackColor = Color.Transparent;
+                _statusText.Text = $" {(isOn ? "Online" : "Offline")}" + (string.IsNullOrWhiteSpace(detail) ? string.Empty : $" ({detail})");
+                _statusText.ForeColor = Color.Black;
+                _statusText.BackColor = Color.Transparent;
+            }
+            catch { }
         }
 
         private Color GetCardColor()

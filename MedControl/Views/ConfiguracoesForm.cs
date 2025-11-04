@@ -31,6 +31,8 @@ namespace MedControl.Views
     private readonly Label _progressLabel = new Label { Text = "Baixando e atualizando…", AutoSize = true, Visible = false, Anchor = AnchorStyles.Left, Font = new Font("Segoe UI", 9F) };
     private readonly Label _progressPercent = new Label { Text = "0%", AutoSize = true, Visible = false, Anchor = AnchorStyles.Left, Font = new Font("Segoe UI", 9F, FontStyle.Bold) };
 
+    // (Conexões movido para Conexões/Chat)
+
         public ConfiguracoesForm()
         {
             Text = "Configurações";
@@ -126,16 +128,33 @@ namespace MedControl.Views
             _tema.SelectedIndex = 0;
             table.Controls.Add(_tema, 1, 7);
 
-            // Linha 8: Salvar
-            StyleButton(_salvar, primary: true);
+            // Espaços reservados (linhas ocupadas anteriormente por Conexões)
             table.Controls.Add(new Label { Text = " " }, 0, 8);
             table.Controls.Add(new Label { Text = " " }, 1, 8);
-            table.Controls.Add(_salvar, 2, 8);
+            table.Controls.Add(new Label { Text = " " }, 2, 8);
+            table.Controls.Add(new Label { Text = " " }, 0, 9);
+            table.Controls.Add(new Label { Text = " " }, 1, 9);
+            table.Controls.Add(new Label { Text = " " }, 2, 9);
+            table.Controls.Add(new Label { Text = " " }, 0, 10);
+            table.Controls.Add(new Label { Text = " " }, 1, 10);
+            table.Controls.Add(new Label { Text = " " }, 2, 10);
+            table.Controls.Add(new Label { Text = " " }, 0, 11);
+            table.Controls.Add(new Label { Text = " " }, 1, 11);
+            table.Controls.Add(new Label { Text = " " }, 2, 11);
+            table.Controls.Add(new Label { Text = " " }, 0, 12);
+            table.Controls.Add(new Label { Text = " " }, 1, 12);
+            table.Controls.Add(new Label { Text = " " }, 2, 12);
 
-            // Linha 9: Progresso (só aparece no modo Online ao salvar)
-            table.Controls.Add(_progressLabel, 0, 9);
-            table.Controls.Add(_progress, 1, 9);
-            table.Controls.Add(_progressPercent, 2, 9);
+            // Linha 13: Salvar
+            StyleButton(_salvar, primary: true);
+            table.Controls.Add(new Label { Text = " " }, 0, 13);
+            table.Controls.Add(new Label { Text = " " }, 1, 13);
+            table.Controls.Add(_salvar, 2, 13);
+
+            // Linha 14: Progresso (só aparece no modo Online ao salvar)
+            table.Controls.Add(_progressLabel, 0, 14);
+            table.Controls.Add(_progress, 1, 14);
+            table.Controls.Add(_progressPercent, 2, 14);
 
             // Eventos
             _browseAlunos.Click += (_, __) =>
@@ -199,6 +218,7 @@ namespace MedControl.Views
             {
                 // trava a UI durante a operação
                 SetBusy(true);
+                // (Conexões agora em Conexões/Chat)
                 var modoSel = _dadosModo.SelectedIndex == 1 ? "online" : "local";
                 Database.SetConfig("dados_modo", modoSel);
                 Database.SetConfig("url_alunos", _urlAlunos.Text?.Trim() ?? string.Empty);

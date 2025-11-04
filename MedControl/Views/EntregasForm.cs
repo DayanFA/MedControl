@@ -19,6 +19,8 @@ namespace MedControl.Views
         private string? _sortKey = null; // Chave, Aluno, Professor, DataHora, Status, Item, Termo
         private bool _sortAsc = true;
         private readonly string? _chaveFiltro; // quando aberto pela tela inicial para uma chave específica
+    private readonly System.Windows.Forms.Timer _refreshTimer = new System.Windows.Forms.Timer();
+    private string? _lastSeenChange;
 
         public EntregasForm()
         {
@@ -156,6 +158,27 @@ namespace MedControl.Views
                 catch { }
                 try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
                 RefreshGrid();
+                // setup auto-refresh polling for multiuser sync
+                try
+                {
+                    _lastSeenChange = Database.GetConfig("last_change_at");
+                    _refreshTimer.Interval = 2000;
+                    _refreshTimer.Tick += (_, ____) =>
+                    {
+                        try
+                        {
+                            var cur = Database.GetConfig("last_change_at");
+                            if (!string.Equals(cur, _lastSeenChange, StringComparison.Ordinal))
+                            {
+                                _lastSeenChange = cur;
+                                RefreshGrid();
+                            }
+                        }
+                        catch { }
+                    };
+                    _refreshTimer.Start();
+                }
+                catch { }
             };
             _grid.CellDoubleClick += (_, e) => OpenTermo();
             _grid.ColumnHeaderMouseClick += (_, e) => OnGridHeaderClick(e.ColumnIndex);

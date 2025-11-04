@@ -1,3 +1,5 @@
+using System;
+using System.Threading.Tasks;
 namespace MedControl;
 
 static class Program
@@ -16,6 +18,20 @@ static class Program
         {
             AppConfig.Load();
             MedControl.Database.Setup();
+            try { MedControl.SyncService.Start(); } catch { }
+            try { if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Host) MedControl.GroupHost.Start(); else MedControl.GroupHost.Stop(); } catch { }
+            try
+            {
+                if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Client)
+                {
+                    // Tenta conectar ao Host em background na inicialização
+                    Task.Run(() =>
+                    {
+                        try { MedControl.GroupClient.Ping(out _); } catch { }
+                    });
+                }
+            }
+            catch { }
             var themeRaw = (MedControl.Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
             var theme = themeRaw switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => themeRaw };
             if (theme == "classico" || theme == "alto_contraste" || theme == "terminal")
@@ -24,6 +40,8 @@ static class Program
                 Application.VisualStyleState = System.Windows.Forms.VisualStyles.VisualStyleState.ClientAndNonClientAreasEnabled;
         }
         catch { }
-        Application.Run(new Form1());
+    Application.Run(new Form1());
+    try { MedControl.GroupHost.Stop(); } catch { }
+    try { MedControl.SyncService.Stop(); } catch { }
     }    
 }

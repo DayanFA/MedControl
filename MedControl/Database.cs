@@ -28,6 +28,21 @@ namespace MedControl
             }
         }
 
+        // Marca uma alteração global para que outras telas/instâncias detectem e atualizem a visualização
+        private static void TouchChange(string? reason = null)
+        {
+            try
+            {
+                SetConfig("last_change_at", DateTime.UtcNow.ToString("o"));
+                if (!string.IsNullOrWhiteSpace(reason))
+                {
+                    SetConfig("last_change_reason", reason);
+                }
+                try { MedControl.SyncService.NotifyChange(); } catch { }
+            }
+            catch { /* best-effort */ }
+        }
+
         private static string Provider => (AppConfig.Instance.DbProvider ?? "sqlite").ToLowerInvariant();
 
         private static DbConnection CreateConnection()
@@ -201,6 +216,10 @@ namespace MedControl
 
         public static List<Chave> GetChaves()
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { return GroupClient.PullChaves(); } catch { /* fallback local */ }
+            }
             var list = new List<Chave>();
             using var conn = CreateConnection();
             conn.Open();
@@ -240,6 +259,7 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@num", c.NumCopias);
             AddParam(cmd, "@desc", c.Descricao ?? "");
             cmd.ExecuteNonQuery();
+            TouchChange("upsert_chave");
         }
 
         // Atualiza uma chave existente identificada pelo nome antigo; permite renomear a chave
@@ -254,6 +274,7 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@desc", c.Descricao ?? "");
             AddParam(cmd, "@oldNome", oldNome);
             cmd.ExecuteNonQuery();
+            TouchChange("update_chave");
         }
 
         public static void DeleteChave(string nome)
@@ -264,10 +285,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             cmd.CommandText = "DELETE FROM chaves WHERE nome=@n";
             AddParam(cmd, "@n", nome);
             cmd.ExecuteNonQuery();
+            TouchChange("delete_chave");
         }
 
         public static void ReplaceAllChaves(System.Collections.Generic.List<Chave> chaves)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.ReplaceAllChaves(chaves); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using var tx = conn.BeginTransaction();
@@ -289,10 +315,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                 ins.ExecuteNonQuery();
             }
             tx.Commit();
+            TouchChange("replace_all_chaves");
         }
 
         public static void InsertReserva(Reserva r)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.InsertReserva(r); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
@@ -307,10 +338,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@dev", r.Devolvido ? 1 : 0);
             AddParam(cmd, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
             cmd.ExecuteNonQuery();
+            TouchChange("insert_reserva");
         }
 
         public static void UpdateReserva(Reserva r)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.UpdateReserva(r); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
@@ -325,10 +361,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@pr", r.Professor ?? "");
             AddParam(cmd, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
             cmd.ExecuteNonQuery();
+            TouchChange("update_reserva");
         }
 
         public static void DeleteReserva(string chave, string? aluno, string? professor, DateTime dataHora)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.DeleteReserva(new Reserva { Chave = chave, Aluno = aluno, Professor = professor, DataHora = dataHora }); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
@@ -338,10 +379,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@pr", professor ?? "");
             AddParam(cmd, "@dt", dataHora.ToString("dd/MM/yyyy HH:mm:ss"));
             cmd.ExecuteNonQuery();
+            TouchChange("delete_reserva");
         }
 
         public static List<Reserva> GetReservas()
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { return GroupClient.PullReservas(); } catch { /* fallback local */ }
+            }
             var list = new List<Reserva>();
             using var conn = CreateConnection();
             conn.Open();
@@ -374,6 +420,10 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
 
         public static void InsertRelatorio(Relatorio r)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.InsertRelatorio(r); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
@@ -387,10 +437,15 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@t", r.TempoComChave ?? "");
             AddParam(cmd, "@te", r.Termo ?? "");
             cmd.ExecuteNonQuery();
+            TouchChange("insert_relatorio");
         }
 
         public static List<Relatorio> GetRelatorios()
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { return GroupClient.PullRelatorio(); } catch { /* fallback local */ }
+            }
             var list = new List<Relatorio>();
             using var conn = CreateConnection();
             conn.Open();
@@ -454,6 +509,10 @@ ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor";
         // ===== Alunos (tabela flexível com dados em JSON) =====
         public static System.Data.DataTable GetAlunosAsDataTable()
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { return GroupClient.PullAlunos(); } catch { /* fallback local */ }
+            }
             var dt = new System.Data.DataTable();
             using var conn = CreateConnection();
             conn.Open();
@@ -520,6 +579,7 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
             AddParam(cmd, "@u", uid);
             AddParam(cmd, "@d", json);
             cmd.ExecuteNonQuery();
+            TouchChange("upsert_aluno");
         }
 
         public static void DeleteAluno(string uid)
@@ -530,10 +590,15 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
             cmd.CommandText = "DELETE FROM alunos WHERE uid=@u";
             AddParam(cmd, "@u", uid);
             cmd.ExecuteNonQuery();
+            TouchChange("delete_aluno");
         }
 
         public static void ReplaceAllAlunos(System.Data.DataTable table)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.ReplaceAllAlunos(table); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using (var tx = conn.BeginTransaction())
@@ -574,11 +639,16 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
                 }
                 tx.Commit();
             }
+            TouchChange("replace_all_alunos");
         }
 
         // ===== Professores (mesmo modelo flexível em JSON) =====
         public static System.Data.DataTable GetProfessoresAsDataTable()
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { return GroupClient.PullProfessores(); } catch { /* fallback local */ }
+            }
             var dt = new System.Data.DataTable();
             using var conn = CreateConnection();
             conn.Open();
@@ -643,6 +713,7 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
             AddParam(cmd, "@u", uid);
             AddParam(cmd, "@d", json);
             cmd.ExecuteNonQuery();
+            TouchChange("upsert_professor");
         }
 
         public static void DeleteProfessor(string uid)
@@ -653,10 +724,15 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
             cmd.CommandText = "DELETE FROM professores WHERE uid=@u";
             AddParam(cmd, "@u", uid);
             cmd.ExecuteNonQuery();
+            TouchChange("delete_professor");
         }
 
         public static void ReplaceAllProfessores(System.Data.DataTable table)
         {
+            if (GroupConfig.Mode == GroupMode.Client)
+            {
+                try { GroupClient.ReplaceAllProfessores(table); return; } catch { /* fallback local */ }
+            }
             using var conn = CreateConnection();
             conn.Open();
             using (var tx = conn.BeginTransaction())
@@ -695,6 +771,7 @@ ON CONFLICT(uid) DO UPDATE SET data=excluded.data";
                 }
                 tx.Commit();
             }
+            TouchChange("replace_all_professores");
         }
     }
 }
