@@ -15,7 +15,8 @@ namespace MedControl.Views
         private TextBox _groupPort;
     private TextBox _nodeAlias;
         private Button _testConn;
-        private Button _saveBtn;
+    private Button _saveBtn;
+    private Button _connectBtn;
         private ListView _peersList;
         private RichTextBox _chatLog;
         private TextBox _messageBox;
@@ -94,6 +95,7 @@ namespace MedControl.Views
             _nodeAlias = new TextBox { Dock = DockStyle.Fill };
             _testConn = new Button { Text = "Testar Conexão", AutoSize = true };
             _saveBtn = new Button { Text = "Salvar", AutoSize = true };
+            _connectBtn = new Button { Text = "Conectar", AutoSize = true };
 
             cfg.Controls.Add(Mk("Modo de Grupo:"), 0, 0);
             cfg.Controls.Add(_groupMode, 1, 0);
@@ -116,7 +118,7 @@ namespace MedControl.Views
             cfg.Controls.Add(new Label { Text = "(opcional p/ testar em 1 PC)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
 
             cfg.Controls.Add(new Label { Text = " " }, 0, 5);
-            cfg.Controls.Add(new Label { Text = " " }, 1, 5);
+            cfg.Controls.Add(_connectBtn, 1, 5);
             cfg.Controls.Add(_saveBtn, 2, 5);
 
             // Peers list
@@ -249,6 +251,7 @@ namespace MedControl.Views
             _groupMode.SelectedIndexChanged += (_, __) => { ToggleGroupUi(); UpdateStatusTimerMode(); };
             _testConn.Click += (_, __) => DoTestConn();
             _saveBtn.Click += (_, __) => DoSave();
+            _connectBtn.Click += (_, __) => DoConnect();
             
             void DoSave()
             {
@@ -313,8 +316,117 @@ namespace MedControl.Views
                 _groupHost.Enabled = isClient;
                 _groupPort.Enabled = isClient;
                 _testConn.Enabled = isClient;
+                _connectBtn.Enabled = isClient;
             }
             catch { }
+        }
+
+        private void DoConnect()
+        {
+            try
+            {
+                if (_groupMode.SelectedIndex != 2)
+                {
+                    MessageBox.Show(this, "Selecione o modo Cliente antes de conectar.");
+                    return;
+                }
+
+                // Aplica temporariamente host/porta informados
+                if (int.TryParse(_groupPort.Text?.Trim(), out var p) && p > 0) GroupConfig.HostPort = p;
+                GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+
+                using var dlg = new SyncProgressForm();
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.Show(this);
+                dlg.Refresh();
+
+                var total = 5; // chaves, reservas, relatórios, alunos, profs
+                int step = 0;
+
+                // Executa sincronização em background
+                Task.Run(() =>
+                {
+                    void Progress(string label)
+                    {
+                        try
+                        {
+                            var percent = Math.Min(100, Math.Max(0, (int)Math.Round((step * 100.0) / total)));
+                            dlg.BeginInvoke(new Action(() => dlg.SetProgress(percent, label)));
+                        }
+                        catch { }
+                    }
+
+                    try
+                    {
+                        // Verifica host
+                        Progress("Verificando host...");
+                        if (!GroupClient.Ping(out var msg))
+                            throw new Exception(string.IsNullOrWhiteSpace(msg) ? "Host indisponível" : msg);
+
+                        // Baixa e importa
+                        step = 1; Progress("Sincronizando 20% – Baixando chaves...");
+                        var chaves = GroupClient.PullChaves();
+                        Database.ReplaceAllChavesLocal(chaves);
+
+                        step = 2; Progress("Sincronizando 40% – Baixando reservas...");
+                        var reservas = GroupClient.PullReservas();
+                        Database.ReplaceAllReservas(reservas);
+
+                        step = 3; Progress("Sincronizando 60% – Baixando relatórios...");
+                        var rels = GroupClient.PullRelatorio();
+                        Database.ReplaceAllRelatorios(rels);
+
+                        step = 4; Progress("Sincronizando 80% – Baixando alunos...");
+                        var alunos = GroupClient.PullAlunos();
+                        Database.ReplaceAllAlunos(alunos);
+
+                        step = 5; Progress("Sincronizando 100% – Baixando professores...");
+                        var profs = GroupClient.PullProfessores();
+                        Database.ReplaceAllProfessores(profs);
+
+                        // Conclui
+                        dlg.BeginInvoke(new Action(() => dlg.Close()));
+
+                        // Ativa modo cliente e salva configs
+                        BeginInvoke(new Action(() =>
+                        {
+                            var alias = _nodeAlias.Text?.Trim() ?? string.Empty;
+                            Database.SetConfig("node_alias", alias);
+                            GroupConfig.Mode = GroupMode.Client;
+                            GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                            // Header
+                            _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
+                            _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
+                            var host = GroupConfig.HostAddress;
+                            if (string.IsNullOrWhiteSpace(host)) host = $"porta {GroupConfig.HostPort}";
+                            _lblHost.Text = $"Host/Porta: {host}";
+                            _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
+                            UpdateStatusTimerMode();
+                            MessageBox.Show(this, "Conectado e sincronizado com sucesso.", "Cliente", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }));
+                    }
+                    catch (Exception ex)
+                    {
+                        try { dlg.BeginInvoke(new Action(() => dlg.Close())); } catch { }
+                        BeginInvoke(new Action(() =>
+                        {
+                            MessageBox.Show(this, "Falha ao conectar/sincronizar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            UpdateStatusTimerMode();
+                        }));
+                    }
+                });
+
+                // Loop de mensagens até fechar
+                while (dlg.Visible)
+                {
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(50);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Erro ao conectar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void DoTestConn()
