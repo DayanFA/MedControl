@@ -13,7 +13,6 @@ namespace MedControl.Views
         private TextBox _groupName;
         private TextBox _groupHost;
         private TextBox _groupPort;
-    private TextBox _nodeAlias;
         private Button _testConn;
     private Button _saveBtn;
     private Button _connectBtn;
@@ -92,7 +91,6 @@ namespace MedControl.Views
             _groupName = new TextBox { Dock = DockStyle.Fill };
             _groupHost = new TextBox { Dock = DockStyle.Fill };
             _groupPort = new TextBox { Dock = DockStyle.Fill };
-            _nodeAlias = new TextBox { Dock = DockStyle.Fill };
             _testConn = new Button { Text = "Testar Conexão", AutoSize = true };
             _saveBtn = new Button { Text = "Salvar", AutoSize = true };
             _connectBtn = new Button { Text = "Conectar", AutoSize = true };
@@ -113,9 +111,7 @@ namespace MedControl.Views
             cfg.Controls.Add(_groupPort, 1, 3);
             cfg.Controls.Add(new Label { Text = "(padrão 49383)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 3);
 
-            cfg.Controls.Add(Mk("Apelido deste dispositivo:"), 0, 4);
-            cfg.Controls.Add(_nodeAlias, 1, 4);
-            cfg.Controls.Add(new Label { Text = "(opcional p/ testar em 1 PC)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
+            // Removido campo de apelido do dispositivo a pedido do usuário
 
             cfg.Controls.Add(new Label { Text = " " }, 0, 5);
             cfg.Controls.Add(_connectBtn, 1, 5);
@@ -244,7 +240,7 @@ namespace MedControl.Views
                 _groupName.Text = GroupConfig.GroupName;
                 _groupHost.Text = GroupConfig.HostAddress;
                 _groupPort.Text = GroupConfig.HostPort.ToString();
-                _nodeAlias.Text = Database.GetConfig("node_alias") ?? string.Empty;
+                // Campo de apelido removido; mantemos configuração existente sem expor no UI
             }
             catch { }
 
@@ -262,8 +258,7 @@ namespace MedControl.Views
                     GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
                     if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
                     GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
-                    var alias = _nodeAlias.Text?.Trim() ?? string.Empty;
-                    Database.SetConfig("node_alias", alias);
+                    // Campo de apelido removido; não alterar node_alias aqui
 
                     if (m == GroupMode.Client)
                     {
@@ -397,8 +392,7 @@ namespace MedControl.Views
                         // Ativa modo cliente e salva configs
                         BeginInvoke(new Action(() =>
                         {
-                            var alias = _nodeAlias.Text?.Trim() ?? string.Empty;
-                            Database.SetConfig("node_alias", alias);
+                            // Campo de apelido removido; não alterar node_alias aqui
                             GroupConfig.Mode = GroupMode.Client;
                             GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
                             // Header
