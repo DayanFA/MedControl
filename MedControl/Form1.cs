@@ -34,12 +34,10 @@ namespace MedControl
             cadastro.DropDownItems.Add("Cadastro de Professores", null, (_, __) => { new Views.CadastroProfessoresForm().ShowDialog(this); RefreshKeysUi(); });
             cadastro.DropDownItems.Add("Cadastro de Chaves", null, (_, __) => { new Views.CadastroChavesForm().ShowDialog(this); RefreshKeysUi(); });
 
-            var reserva = new ToolStripMenuItem("Reserva");
-            reserva.DropDownItems.Add("Fazer Reserva", null, (_, __) => { new Views.ReservaForm().ShowDialog(this); RefreshKeysUi(); });
-
             var chave = new ToolStripMenuItem("Chave");
+            chave.DropDownItems.Add("Fazer Reserva", null, (_, __) => { new Views.ReservaForm().ShowDialog(this); RefreshKeysUi(); });
             chave.DropDownItems.Add("Entregar Chave", null, (_, __) => { new Views.EntregarChaveForm().ShowDialog(this); RefreshKeysUi(); });
-            chave.DropDownItems.Add("Ver Entregas", null, (_, __) => { new Views.EntregasForm().ShowDialog(this); RefreshKeysUi(); });
+            chave.DropDownItems.Add("Relação", null, (_, __) => { new Views.EntregasForm().ShowDialog(this); RefreshKeysUi(); });
 
             var relatorio = new ToolStripMenuItem("Relatório");
             relatorio.DropDownItems.Add("Ver Relatórios", null, (_, __) => new Views.RelatorioForm().ShowDialog(this));
@@ -55,7 +53,7 @@ namespace MedControl
             var ajuda = new ToolStripMenuItem("Ajuda");
             ajuda.DropDownItems.Add("Sobre", null, (_, __) => new Views.AjudaForm().ShowDialog(this));
 
-            _menu.Items.AddRange(new ToolStripItem[] { cadastro, reserva, chave, relatorio, configuracoes, ajuda });
+            _menu.Items.AddRange(new ToolStripItem[] { cadastro, chave, relatorio, configuracoes, ajuda });
             MainMenuStrip = _menu;
             Controls.Add(_menu);
 
