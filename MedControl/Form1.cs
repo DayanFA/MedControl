@@ -279,8 +279,21 @@ namespace MedControl
                 _toolTip.SetToolTip(panel, statusInfo);
 
                 // Click opens Entregas, then refresh
+                // Clique em qualquer parte do card (ou seus filhos) abre relação filtrada pela chave
+                var chaveNome = c.Nome; // capturar para o handler
+                EventHandler open = (_, __) => { new Views.EntregasForm(chaveNome).ShowDialog(this); RefreshKeysUi(); };
                 panel.Cursor = Cursors.Hand;
-                panel.Click += (_, __) => { new Views.EntregasForm().ShowDialog(this); RefreshKeysUi(); };
+                panel.Click += open;
+                // Garantir que cliques nos filhos também abram
+                void WireClick(Control ctrl)
+                {
+                    ctrl.Cursor = Cursors.Hand;
+                    ctrl.Click += open;
+                }
+                WireClick(lbl);
+                WireClick(status);
+                WireClick(details);
+                WireClick(disponibilidade);
 
                 // Add controls in docking order (bottom -> fill -> top -> top)
                 panel.Controls.Add(disponibilidade);

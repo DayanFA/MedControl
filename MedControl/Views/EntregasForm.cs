@@ -18,6 +18,7 @@ namespace MedControl.Views
         private string _searchText = string.Empty;
         private string? _sortKey = null; // Chave, Aluno, Professor, DataHora, Status, Item, Termo
         private bool _sortAsc = true;
+        private readonly string? _chaveFiltro; // quando aberto pela tela inicial para uma chave específica
 
         public EntregasForm()
         {
@@ -164,6 +165,19 @@ namespace MedControl.Views
             btnMaisInfo.Click += (_, __) => MaisInfo();
         }
 
+        public EntregasForm(string chaveFiltro) : this()
+        {
+            try
+            {
+                _chaveFiltro = chaveFiltro;
+                Text = $"Relação — Chave: {chaveFiltro}";
+                // Deixa a busca já preenchida para o usuário, mas a filtragem dedicada garante precisão
+                _search.Text = chaveFiltro;
+                _searchText = chaveFiltro;
+            }
+            catch { }
+        }
+
         private void RefreshGrid()
         {
             _allReservas = Database.GetReservas();
@@ -230,6 +244,12 @@ namespace MedControl.Views
                     (r.Termo ?? string.Empty).ToLowerInvariant().Contains(s) ||
                     r.DataHora.ToString("dd/MM/yyyy HH:mm:ss").Contains(s)
                 );
+            }
+
+            // Filtro dedicado por chave quando aberto a partir do card da tela inicial
+            if (!string.IsNullOrWhiteSpace(_chaveFiltro))
+            {
+                q = q.Where(r => string.Equals(r.Chave ?? string.Empty, _chaveFiltro, StringComparison.OrdinalIgnoreCase));
             }
 
             if (!string.IsNullOrEmpty(_sortKey))
