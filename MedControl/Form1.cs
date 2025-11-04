@@ -75,6 +75,7 @@ namespace MedControl
                 Dock = DockStyle.Top,
                 Padding = new Padding(0, 10, 0, 10)
             };
+            _headerLabel.Tag = "keep-font";
 
             _keysPanel = new DoubleBufferedFlowLayoutPanel
             {
@@ -213,8 +214,9 @@ namespace MedControl
                     Dock = DockStyle.Top,
                     Height = 24,
                     TextAlign = ContentAlignment.MiddleCenter,
-                    Font = new Font("Segoe UI", 10, FontStyle.Regular)
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold)
                 };
+                status.Tag = "keep-backcolor keep-font";
 
                 // details line: who and since when
                 string detailsText = string.Empty;
@@ -287,40 +289,110 @@ namespace MedControl
         private void ApplyTheme()
         {
             // theme selection
-            var theme = (Database.GetConfig("theme") ?? "marrom").ToLowerInvariant();
+            var raw = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+            var theme = raw switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => raw };
             Color bg = theme switch
             {
-                "preto" => Color.FromArgb(0x24, 0x24, 0x24),
-                "branco" => Color.WhiteSmoke,
-                "azul" => Color.FromArgb(0x1E, 0x3A, 0x5F),
+                "mica" => Color.FromArgb(245, 246, 250),
+                "alto_contraste" => Color.Black,
+                "terminal" => Color.Black,
+                "claro" => Color.FromArgb(246, 247, 250),
+                "escuro" => Color.FromArgb(30, 30, 30),
+                "classico" => SystemColors.Control,
+                "padrao" => Color.SaddleBrown,
                 _ => Color.SaddleBrown
             };
-            // override via custom hex
-            var customBg = Database.GetConfig("color_background");
-            if (!string.IsNullOrWhiteSpace(customBg) && TryParseHexColor(customBg, out var parsed))
-                bg = parsed;
+            
+            // Se tema for clássico, desabilitar visual styles e aplicar estilo Win95-like
+            if (theme == "classico")
+            {
+                try { Application.VisualStyleState = System.Windows.Forms.VisualStyles.VisualStyleState.NoneEnabled; } catch { }
+            }
+            else
+            {
+                try { Application.VisualStyleState = System.Windows.Forms.VisualStyles.VisualStyleState.ClientAndNonClientAreasEnabled; } catch { }
+            }
 
             _mainPanel.BackColor = bg;
             _headerLabel.BackColor = bg;
             _statsPanel.BackColor = bg;
             _keysPanel.BackColor = bg;
-            _headerLabel.ForeColor = theme == "claro" ? Color.Black : Color.White;
+            _headerLabel.ForeColor = theme == "branco" || theme == "classico" ? Color.Black : Color.White;
+            
+            if (theme == "classico" || theme == "mica" || theme == "alto_contraste" || theme == "terminal" || theme == "claro" || theme == "escuro")
+            {
+                try { ThemeHelper.ApplyCurrentTheme(this); } catch { }
+            }
         }
 
         private Color GetCardColor()
         {
-            var cardHex = Database.GetConfig("color_card");
-            if (!string.IsNullOrWhiteSpace(cardHex) && TryParseHexColor(cardHex, out var parsed))
-                return parsed;
             // default per theme
-            var theme = (Database.GetConfig("theme") ?? "marrom").ToLowerInvariant();
+            var theme = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+            theme = theme switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => theme };
             return theme switch
             {
-                "preto" => Color.FromArgb(60, 60, 60),
-                "branco" => Color.White,
-                "azul" => Color.FromArgb(0x2E, 0x5C, 0x8A),
+                "mica" => Color.White,
+                "alto_contraste" => Color.Black,
+                "terminal" => Color.Black,
+                "claro" => Color.White,
+                "escuro" => Color.FromArgb(45, 45, 48),
+                "classico" => SystemColors.ControlLight,
+                "padrao" => Color.BurlyWood,
                 _ => Color.BurlyWood
             };
+        }
+
+        private void ApplyClassicStyle(Control root)
+        {
+            try
+            {
+                var classicFont = new Font("Microsoft Sans Serif", 8.25f, FontStyle.Regular);
+                void Walk(Control c)
+                {
+                    // Fonte padrão clássica
+                    try { c.Font = classicFont; } catch { }
+
+                    // Cores clássicas
+                    if (c is TextBox || c is ComboBox || c is ListBox)
+                    {
+                        c.BackColor = SystemColors.Window;
+                        c.ForeColor = SystemColors.WindowText;
+                    }
+                    else if (c is DataGridView dgv)
+                    {
+                        c.BackColor = SystemColors.Control;
+                        c.ForeColor = SystemColors.ControlText;
+                        dgv.EnableHeadersVisualStyles = false;
+                        dgv.BackgroundColor = SystemColors.Control;
+                        dgv.GridColor = SystemColors.ControlDark;
+                        dgv.ColumnHeadersDefaultCellStyle.BackColor = SystemColors.Control;
+                        dgv.ColumnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
+                        dgv.ColumnHeadersDefaultCellStyle.Font = classicFont;
+                        dgv.DefaultCellStyle.BackColor = SystemColors.Window;
+                        dgv.DefaultCellStyle.ForeColor = SystemColors.WindowText;
+                        dgv.DefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
+                        dgv.DefaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
+                    }
+                    else if (c is Button btn)
+                    {
+                        btn.FlatStyle = FlatStyle.Standard;
+                        c.BackColor = SystemColors.Control;
+                        c.ForeColor = SystemColors.ControlText;
+                    }
+                    else
+                    {
+                        c.BackColor = SystemColors.Control;
+                        c.ForeColor = SystemColors.ControlText;
+                    }
+
+                    foreach (Control child in c.Controls) Walk(child);
+                }
+                Walk(root);
+                root.PerformLayout();
+                root.Refresh();
+            }
+            catch { }
         }
 
         private static bool TryParseHexColor(string hex, out Color color)
@@ -357,7 +429,8 @@ namespace MedControl
                 TextAlign = ContentAlignment.MiddleCenter,
                 BackColor = back,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.FixedSingle,
+                Tag = "keep-backcolor keep-font"
             };
         }
 

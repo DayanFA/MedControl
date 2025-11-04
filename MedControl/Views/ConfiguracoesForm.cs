@@ -16,10 +16,6 @@ namespace MedControl.Views
         private readonly TextBox _mysqlConn = new TextBox { Dock = DockStyle.Fill };
         // Visual
     private readonly ComboBox _tema = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
-        private readonly TextBox _bgHex = new TextBox { ReadOnly = true, Dock = DockStyle.Fill };
-        private readonly TextBox _cardHex = new TextBox { ReadOnly = true, Dock = DockStyle.Fill };
-    private readonly Button _pickBg = new Button { Text = "🎨 Escolher cor…" };
-    private readonly Button _pickCard = new Button { Text = "🎨 Escolher cor…" };
 
         public ConfiguracoesForm()
         {
@@ -40,9 +36,7 @@ namespace MedControl.Views
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 2 provider
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 3 mysql conn
             table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 4 tema
-            table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 5 bg
-            table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 6 card
-            table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 7 salvar
+            table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // 5 salvar
 
             Label MkLabel(string text) => new Label
             {
@@ -101,32 +95,28 @@ namespace MedControl.Views
             table.Controls.Add(new Label { Text = " " }, 2, 3);
             // Visual theme
             table.Controls.Add(MkLabel("Tema Visual:"), 0, 4);
-            _tema.Items.AddRange(new object[] { "Marrom (padrão)", "Preto", "Branco", "Azul" });
+            _tema.Items.AddRange(new object[] { "Padrão", "Claro", "Escuro", "Clássico (95)", "Translúcido (Mica)", "Alto Contraste", "Terminal (CRT)" });
             _tema.Font = new Font("Segoe UI", 10F);
             table.Controls.Add(_tema, 1, 4);
             table.Controls.Add(new Label { Text = " " }, 2, 4);
-            // Colors
-            table.Controls.Add(MkLabel("Cor de Fundo (opcional):"), 0, 5);
-            _bgHex.Font = new Font("Segoe UI", 10F);
-            table.Controls.Add(_bgHex, 1, 5);
-            StyleButton(_pickBg);
-            table.Controls.Add(_pickBg, 2, 5);
-            table.Controls.Add(MkLabel("Cor dos Cartões (opcional):"), 0, 6);
-            _cardHex.Font = new Font("Segoe UI", 10F);
-            table.Controls.Add(_cardHex, 1, 6);
-            StyleButton(_pickCard);
-            table.Controls.Add(_pickCard, 2, 6);
             // Save
             StyleButton(_salvar, primary: true);
+            _salvar.Tag = "accent";
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Padding = new Padding(8) };
             buttons.Controls.Add(_salvar);
-            table.Controls.Add(buttons, 0, 7);
+            table.Controls.Add(buttons, 0, 5);
             table.SetColumnSpan(buttons, 3);
             Controls.Add(table);
 
             Load += (_, __) =>
             {
-                try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { }
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); }
+                }
+                catch { }
                 _alunos.Text = Database.GetConfig("caminho_alunos") ?? string.Empty;
                 _profs.Text = Database.GetConfig("caminho_professores") ?? string.Empty;
 
@@ -135,16 +125,21 @@ namespace MedControl.Views
                 _dbProvider.SelectedIndex = prov == "mysql" ? 1 : 0;
                 _mysqlConn.Text = AppConfig.Instance.MySqlConnectionString ?? string.Empty;
 
-                var theme = (Database.GetConfig("theme") ?? "marrom").ToLowerInvariant();
+                var themeRaw = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                var theme = themeRaw switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => themeRaw };
                 _tema.SelectedIndex = theme switch
                 {
-                    "preto" => 1,
-                    "branco" => 2,
-                    "azul" => 3,
+                    "padrao" => 0,
+                    "claro" => 1,
+                    "escuro" => 2,
+                    "classico" => 3,
+                    "mica" => 4,
+                    "alto_contraste" => 5,
+                    "terminal" => 6,
                     _ => 0
                 };
-                _bgHex.Text = Database.GetConfig("color_background") ?? string.Empty;
-                _cardHex.Text = Database.GetConfig("color_card") ?? string.Empty;
+                // Aplicar tema atual (inclui clássico, mica, alto contraste, terminal)
+                try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
             };
 
             _browseAlunos.Click += (_, __) =>
@@ -159,24 +154,6 @@ namespace MedControl.Views
                 if (ofd.ShowDialog(this) == DialogResult.OK) _profs.Text = ofd.FileName;
             };
 
-            _pickBg.Click += (_, __) =>
-            {
-                using var cd = new ColorDialog();
-                if (cd.ShowDialog(this) == DialogResult.OK)
-                {
-                    _bgHex.Text = ColorToHex(cd.Color);
-                }
-            };
-
-            _pickCard.Click += (_, __) =>
-            {
-                using var cd = new ColorDialog();
-                if (cd.ShowDialog(this) == DialogResult.OK)
-                {
-                    _cardHex.Text = ColorToHex(cd.Color);
-                }
-            };
-
             _dbProvider.SelectedIndexChanged += (_, __) =>
             {
                 bool isMy = _dbProvider.SelectedIndex == 1;
@@ -186,9 +163,7 @@ namespace MedControl.Views
 
             _tema.SelectedIndexChanged += (_, __) =>
             {
-                var (bg, card) = GetDefaultsForThemeIndex(_tema.SelectedIndex);
-                _bgHex.Text = bg;
-                _cardHex.Text = card;
+                // Nada a fazer: usamos apenas temas pré-definidos agora
             };
 
             _salvar.Click += (_, __) =>
@@ -209,14 +184,18 @@ namespace MedControl.Views
                 // Save theme
                 var themeKey = _tema.SelectedIndex switch
                 {
-                    1 => "preto",
-                    2 => "branco",
-                    3 => "azul",
-                    _ => "marrom"
+                    0 => "padrao",
+                    1 => "claro",
+                    2 => "escuro",
+                    3 => "classico",
+                    4 => "mica",
+                    5 => "alto_contraste",
+                    6 => "terminal",
+                    _ => "padrao"
                 };
                 Database.SetConfig("theme", themeKey);
-                if (!string.IsNullOrWhiteSpace(_bgHex.Text)) Database.SetConfig("color_background", _bgHex.Text);
-                if (!string.IsNullOrWhiteSpace(_cardHex.Text)) Database.SetConfig("color_card", _cardHex.Text);
+                // Aplicar imediatamente a todos os formulários abertos e ajustar VisualStyleState
+                try { MedControl.UI.ThemeHelper.ApplyVisualStyleStateForCurrentTheme(); MedControl.UI.ThemeHelper.ApplyToAllOpenForms(); } catch { }
 
                 // Re-run setup to ensure schema exists on the newly selected provider
                 try { Database.Setup(); } catch { }
@@ -225,18 +204,5 @@ namespace MedControl.Views
             };
         }
 
-        private static string ColorToHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
-
-        private static (string bg, string card) GetDefaultsForThemeIndex(int idx)
-        {
-            // Return hex defaults for presets
-            return idx switch
-            {
-                1 => ("#242424", "#3C3C3C"), // Preto
-                2 => ("#F5F5F5", "#FFFFFF"), // Branco
-                3 => ("#1E3A5F", "#2E5C8A"), // Azul
-                _ => ("#8B4513", "#DEB887")  // Marrom padrão: SaddleBrown / BurlyWood
-            };
-        }
     }
 }

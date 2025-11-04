@@ -99,6 +99,7 @@ namespace MedControl.Views
             _btnSalvar.ForeColor = Color.White;
             _btnSalvar.FlatStyle = FlatStyle.Flat;
             _btnSalvar.FlatAppearance.BorderSize = 0;
+            _btnSalvar.Tag = "accent";
             var saveBase = _btnSalvar.BackColor;
             _btnSalvar.MouseEnter += (_, __) => _btnSalvar.BackColor = Darken(saveBase, 12);
             _btnSalvar.MouseLeave += (_, __) => _btnSalvar.BackColor = saveBase;
@@ -118,11 +119,21 @@ namespace MedControl.Views
             layout.ResumeLayout();
             ResumeLayout();
 
+            // Aplicar tema atual, conforme configuração
+            Load += (_, __) => { try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { } };
+
             // Carregamento assíncrono para evitar travar a abertura do diálogo (sem placeholders para não piscar)
             Shown += async (_, __) =>
             {
-                // Deferir efeito visual para depois da abertura
-                try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { }
+                // Aplicar Mica somente se o tema atual for 'mica'
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    // normaliza chaves legadas
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); }
+                }
+                catch { }
 
                 // Indica carregamento sem desabilitar inputs (evita aparência acinzentada)
                 this.UseWaitCursor = true;

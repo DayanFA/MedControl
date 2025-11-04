@@ -92,7 +92,7 @@ namespace MedControl.Views
             Controls.Add(_top);
             Controls.Add(_bottomBar);
 
-            Load += (_, __) => { ReloadFromDb(); ApplyFilterAndRefresh(); };
+            Load += (_, __) => { ReloadFromDb(); ApplyFilterAndRefresh(); try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { } };
 
             // Bottom bar pagination
             StylePagerButton(_prevBtn, "‹");
@@ -304,6 +304,8 @@ namespace MedControl.Views
             btn.Size = size;
             btn.MinimumSize = size;
             btn.Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point);
+            // Marca como botão de ação/acento para o ThemeHelper não sobrescrever cores/estilo
+            btn.Tag = "accent";
             btn.ImageAlign = ContentAlignment.MiddleLeft;
             btn.TextImageRelation = TextImageRelation.ImageBeforeText;
             btn.FlatStyle = FlatStyle.Flat;

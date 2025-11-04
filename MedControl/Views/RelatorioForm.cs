@@ -38,6 +38,7 @@ namespace MedControl.Views
             _export.ForeColor = Color.White;
             _export.FlatStyle = FlatStyle.Flat;
             _export.FlatAppearance.BorderSize = 0;
+            _export.Tag = "accent";
 
             // search box with placeholder
             _search.Width = 260; _search.Font = new Font("Segoe UI", 10F); _search.Margin = new Padding(18, 6, 3, 3);
@@ -69,7 +70,17 @@ namespace MedControl.Views
             Controls.Add(_grid);
             Controls.Add(panelTop);
 
-            Load += (_, __) => { try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { } RefreshGrid(); };
+            Load += (_, __) => {
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); }
+                }
+                catch { }
+                try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
+                RefreshGrid();
+            };
             _grid.ColumnHeaderMouseClick += (_, e) => OnGridHeaderClick(e.ColumnIndex);
             _grid.CellDoubleClick += (_, e) => OpenTermo();
             _export.Click += (_, __) => Exportar();

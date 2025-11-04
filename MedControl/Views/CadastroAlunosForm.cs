@@ -122,7 +122,13 @@ namespace MedControl.Views
             // Apply Windows 11-like effects (Mica/rounded) after handle is created
             this.HandleCreated += (_, __) =>
             {
-                try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { }
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { MedControl.UI.FluentEffects.ApplyWin11Mica(this); }
+                }
+                catch { }
             };
         }
 
@@ -148,7 +154,8 @@ namespace MedControl.Views
                 ,
                 Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 TextAlign = ContentAlignment.MiddleCenter,
-                MinimumSize = new Size(96, 34)
+                MinimumSize = new Size(96, 34),
+                Tag = "accent"
             };
         }
 
@@ -290,6 +297,9 @@ namespace MedControl.Views
             this.Load += (_, __) => Roundify(_searchBox, 12);
             _searchBox.SizeChanged += (_, __) => Roundify(_searchBox, 12);
             _topPanel.Controls.Add(_searchBox);
+
+            // Aplicar tema atual selecionado nas configurações
+            try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
         }
 
         private static void Roundify(Control control, int radius)

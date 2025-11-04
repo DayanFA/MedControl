@@ -25,6 +25,18 @@ namespace MedControl.UI
 			}
 		}
 
+		// Reset backdrop to default (disable Mica/Acrylic effects)
+		public static void ResetWin11Backdrop(Form form)
+		{
+			if (form == null || form.IsDisposed) return;
+			try
+			{
+				DisableBackdrop(form.Handle);
+				SetRoundedCorners(form.Handle, 0); // default corners
+			}
+			catch { }
+		}
+
 		public static void SetRoundedCorners(IntPtr hWnd, int cornerPreference)
 		{
 			// 33 = DWMWA_WINDOW_CORNER_PREFERENCE, values: 0=Default,1=DoNotRound,2=Round,3=RoundSmall
@@ -40,6 +52,14 @@ namespace MedControl.UI
 			const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
 			int mica = 2;
 			DwmSetWindowAttribute(hWnd, DWMWA_SYSTEMBACKDROP_TYPE, ref mica, sizeof(int));
+		}
+
+		private static void DisableBackdrop(IntPtr hWnd)
+		{
+			if (hWnd == IntPtr.Zero) return;
+			const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
+			int none = 1; // DWMSBT_NONE
+			DwmSetWindowAttribute(hWnd, DWMWA_SYSTEMBACKDROP_TYPE, ref none, sizeof(int));
 		}
 
 		private static void EnableBlur(IntPtr hWnd)

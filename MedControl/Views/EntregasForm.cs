@@ -47,6 +47,7 @@ namespace MedControl.Views
                     FlatStyle = FlatStyle.Flat
                 };
                 b.FlatAppearance.BorderSize = 0;
+                b.Tag = "accent";
                 var baseCol = b.BackColor;
                 b.MouseEnter += (_, __) => b.BackColor = Darken(baseCol, 12);
                 b.MouseLeave += (_, __) => b.BackColor = baseCol;
@@ -83,6 +84,7 @@ namespace MedControl.Views
                     FlatStyle = FlatStyle.Flat
                 };
                 b.FlatAppearance.BorderSize = 0;
+                b.Tag = "accent";
                 return b;
             }
 
@@ -144,7 +146,14 @@ namespace MedControl.Views
 
             Load += (_, __) =>
             {
-                try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { }
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); }
+                }
+                catch { }
+                try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
                 RefreshGrid();
             };
             _grid.CellDoubleClick += (_, e) => OpenTermo();

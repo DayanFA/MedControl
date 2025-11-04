@@ -124,6 +124,7 @@ namespace MedControl.Views
             _btn.ForeColor = Color.White;
             _btn.FlatStyle = FlatStyle.Flat;
             _btn.FlatAppearance.BorderSize = 0;
+            _btn.Tag = "accent";
             var saveBase = _btn.BackColor;
             _btn.MouseEnter += (_, __) => _btn.BackColor = Darken(saveBase, 12);
             _btn.MouseLeave += (_, __) => _btn.BackColor = saveBase;
@@ -141,10 +142,19 @@ namespace MedControl.Views
             Controls.Add(buttons);
             ResumeLayout();
 
+            // Aplicar tema atual no carregamento
+            Load += (_, __) => { try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { } };
+
             // Carregamento assíncrono para não travar
             Shown += async (_, __) =>
             {
-                try { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); } catch { }
+                try
+                {
+                    var t = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
+                    t = t switch { "marrom" => "padrao", "branco" => "claro", "preto" => "escuro", "azul" => "padrao", _ => t };
+                    if (t == "mica") { BeginInvoke(new Action(() => { try { MedControl.UI.FluentEffects.ApplyWin11Mica(this); } catch { } })); }
+                }
+                catch { }
                 _btnTermo.Enabled = false;
                 UseWaitCursor = true;
                 var loaded = await Task.Run(() =>

@@ -87,6 +87,7 @@ namespace MedControl.Views
                 }
                 _filtered = _table.Copy();
                 ApplyFilterAndRefresh();
+                try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
             };
 
             _import.Click += (_, __) =>
@@ -247,6 +248,7 @@ namespace MedControl.Views
             btn.Cursor = Cursors.Hand;
             btn.BackColor = baseCol;
             btn.ForeColor = Color.White;
+            btn.Tag = "accent";
             var hover = Darken(baseCol, 12);
             var pressed = Darken(baseCol, 22);
             btn.MouseEnter += (_, __) => btn.BackColor = hover;
