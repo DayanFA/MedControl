@@ -29,6 +29,7 @@ namespace MedControl
                 var port = GroupConfig.HostPort;
                 _listener = new TcpListener(IPAddress.Any, port);
                 _listener.Start();
+                try { FirewallHelper.TryOpenFirewall(port); } catch { }
                 _thread = new Thread(ListenLoop) { IsBackground = true, Name = "GroupHost.Listen" };
                 _thread.Start();
             }
