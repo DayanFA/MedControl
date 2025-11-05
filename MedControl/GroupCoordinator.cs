@@ -13,18 +13,19 @@ namespace MedControl
     private static System.Threading.Timer? _timer;
         private static readonly object _lock = new();
         private static DateTime _lastRoleChange = DateTime.MinValue;
-        private static readonly TimeSpan RoleChangeCooldown = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan HostStaleAfter = TimeSpan.FromSeconds(12);
+        private static readonly TimeSpan RoleChangeCooldown = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan HostStaleAfter = TimeSpan.FromSeconds(6);
         private static DateTime _lastHostSeenUtc = DateTime.MinValue;
         private static DateTime _lastReconnectTryUtc = DateTime.MinValue;
-        private static readonly TimeSpan PromotionGrace = TimeSpan.FromSeconds(8);
-        private static readonly TimeSpan ReconnectTryCooldown = TimeSpan.FromSeconds(4);
+        private static readonly TimeSpan PromotionGrace = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan ReconnectTryCooldown = TimeSpan.FromSeconds(3);
+        private static DateTime _selfDemotionUntil = DateTime.MinValue;
 
         public static void Start()
         {
             try
             {
-                _timer = new System.Threading.Timer(_ => Evaluate(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
+                _timer = new System.Threading.Timer(_ => Evaluate(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
             }
             catch { }
         }
@@ -106,6 +107,11 @@ namespace MedControl
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(n => RankByHash(group, n))
                     .ToArray();
+                // Se acabamos de sair de Host, evitamos auto-promoção por alguns segundos para dar chance a outro nó
+                if (DateTime.UtcNow < _selfDemotionUntil)
+                {
+                    candidateNames = candidateNames.Where(n => !string.Equals(n, meName, StringComparison.OrdinalIgnoreCase)).ToArray();
+                }
                 if (candidateNames.Length == 0)
                 {
                     // Sem candidatos? segue solo
@@ -158,6 +164,11 @@ namespace MedControl
                 bool changed = false;
                 if (desired != current)
                 {
+                    // Se estamos saindo de Host, define uma janela de despromoção para evitar retornar imediatamente a Host
+                    if (current == GroupMode.Host && desired != GroupMode.Host)
+                    {
+                        _selfDemotionUntil = now.AddSeconds(8);
+                    }
                     GroupConfig.Mode = desired;
                     changed = true;
                 }
@@ -184,6 +195,11 @@ namespace MedControl
                     try { Database.SetConfig("last_change_reason", "role_change"); } catch { }
                     try { SyncService.NotifyChange(); } catch { }
                     try { SyncService.ForceBeacon(); } catch { }
+                    // Se viramos Cliente com um host conhecido, dispara um ping rápido para ajustar status e eventualmente reconectar UIs
+                    if (GroupConfig.Mode == GroupMode.Client && !string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                    {
+                        System.Threading.Tasks.Task.Run(() => { try { GroupClient.Ping(out _); } catch { } });
+                    }
                 }
             }
             catch { }

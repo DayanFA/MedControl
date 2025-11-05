@@ -355,7 +355,27 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
         {
             if (GroupConfig.Mode == GroupMode.Client)
             {
-                try { GroupClient.InsertReserva(r); return; } catch { /* fallback local */ }
+                try
+                {
+                    GroupClient.InsertReserva(r);
+                    // Após enviar ao host com sucesso, atualiza cache local em background e sinaliza mudança local
+                    try
+                    {
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                var full = GroupClient.PullReservas();
+                                ReplaceAllReservas(full);
+                            }
+                            catch { }
+                        });
+                        TouchChange("insert_reserva_remote");
+                    }
+                    catch { }
+                    return;
+                }
+                catch { /* fallback local */ }
             }
             using var conn = CreateConnection();
             conn.Open();
@@ -378,7 +398,26 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
         {
             if (GroupConfig.Mode == GroupMode.Client)
             {
-                try { GroupClient.UpdateReserva(r); return; } catch { /* fallback local */ }
+                try
+                {
+                    GroupClient.UpdateReserva(r);
+                    try
+                    {
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                var full = GroupClient.PullReservas();
+                                ReplaceAllReservas(full);
+                            }
+                            catch { }
+                        });
+                        TouchChange("update_reserva_remote");
+                    }
+                    catch { }
+                    return;
+                }
+                catch { /* fallback local */ }
             }
             using var conn = CreateConnection();
             conn.Open();
@@ -401,7 +440,26 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
         {
             if (GroupConfig.Mode == GroupMode.Client)
             {
-                try { GroupClient.DeleteReserva(new Reserva { Chave = chave, Aluno = aluno, Professor = professor, DataHora = dataHora }); return; } catch { /* fallback local */ }
+                try
+                {
+                    GroupClient.DeleteReserva(new Reserva { Chave = chave, Aluno = aluno, Professor = professor, DataHora = dataHora });
+                    try
+                    {
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                var full = GroupClient.PullReservas();
+                                ReplaceAllReservas(full);
+                            }
+                            catch { }
+                        });
+                        TouchChange("delete_reserva_remote");
+                    }
+                    catch { }
+                    return;
+                }
+                catch { /* fallback local */ }
             }
             using var conn = CreateConnection();
             conn.Open();
@@ -538,6 +596,38 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             }
             tx.Commit();
             TouchChange("replace_all_reservas");
+        }
+
+        // Versão silenciosa: substitui reservas sem disparar TouchChange/NotifyChange (evita loops em CHANGE)
+        public static void ReplaceAllReservasLocalSilent(System.Collections.Generic.List<Reserva> reservas)
+        {
+            using var conn = CreateConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM reservas";
+                del.ExecuteNonQuery();
+            }
+            foreach (var r in reservas)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao)
+                                    VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd)";
+                AddParam(ins, "@ch", r.Chave);
+                AddParam(ins, "@al", r.Aluno ?? "");
+                AddParam(ins, "@pr", r.Professor ?? "");
+                AddParam(ins, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
+                AddParam(ins, "@em", r.EmUso ? 1 : 0);
+                AddParam(ins, "@te", r.Termo ?? "");
+                AddParam(ins, "@dev", r.Devolvido ? 1 : 0);
+                AddParam(ins, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+                ins.ExecuteNonQuery();
+            }
+            tx.Commit();
+            // sem TouchChange
         }
 
         // Substitui completamente a tabela de relatorio (para sincronização inicial)

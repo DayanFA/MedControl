@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -37,19 +39,67 @@ namespace MedControl
 
         private static Version GetCurrentVersion()
         {
+            // Try ProductVersion first (may contain "+commit" metadata)
             try
             {
                 var v = Application.ProductVersion;
-                if (Version.TryParse(v, out var ver)) return Normalize(ver);
+                if (!string.IsNullOrWhiteSpace(v))
+                {
+                    if (TryParseVersionFlexible(v, out var ver)) return Normalize(ver);
+                }
             }
             catch { }
+
+            // Fallback: AssemblyInformationalVersion (may contain metadata)
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+                if (!string.IsNullOrWhiteSpace(info) && TryParseVersionFlexible(info!, out var ver)) return Normalize(ver);
+            }
+            catch { }
+
+            // Fallback: AssemblyFileVersion (numeric)
+            try
+            {
+                var asm = Assembly.GetExecutingAssembly();
+                var fileVer = asm.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+                if (!string.IsNullOrWhiteSpace(fileVer) && Version.TryParse(fileVer, out var ver)) return Normalize(ver);
+            }
+            catch { }
+
             return new Version(1, 0, 0, 0);
+        }
+
+        private static bool TryParseVersionFlexible(string input, out Version ver)
+        {
+            // Strip any "+build" or "-prerelease" metadata and keep only the first numeric x[.y][.z][.w]
+            // e.g., "1.1.0+7f8fdb0" -> "1.1.0", "v1.2.3-beta" -> "1.2.3"
+            ver = new Version(1, 0, 0, 0);
+            if (string.IsNullOrWhiteSpace(input)) return false;
+
+            // Remove leading v/V and split off metadata (+ or -)
+            var cleaned = input.Trim().TrimStart('v', 'V');
+            var metaIdx = cleaned.IndexOfAny(new[] { '+', '-' });
+            if (metaIdx > 0) cleaned = cleaned.Substring(0, metaIdx);
+
+            // Keep only digits and dots from the beginning
+            var m = Regex.Match(cleaned, "^\\d+(?:\\.\\d+){0,3}");
+            if (!m.Success) return false;
+
+            if (Version.TryParse(m.Value, out var parsed))
+            {
+                ver = parsed;
+                return true;
+            }
+            return false;
         }
 
         private static Version Normalize(Version v)
         {
             // Keep 3 components for comparison (major.minor.patch)
-            return new Version(v.Major, Math.Max(0, v.Minor), Math.Max(0, v.Build >= 0 ? v.Build : 0));
+            var patch = v.Build >= 0 ? v.Build : 0;
+            return new Version(v.Major, Math.Max(0, v.Minor), Math.Max(0, patch));
         }
 
         private class GithubRelease

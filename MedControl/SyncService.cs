@@ -23,6 +23,7 @@ namespace MedControl
     private static readonly ConcurrentDictionary<string, PeerInfo> _peers = new();
     private static readonly ConcurrentDictionary<string, DateTime> _seenChatIds = new();
     private static DateTime _lastPrune = DateTime.UtcNow;
+    private static DateTime _lastBgPullUtc = DateTime.MinValue;
 
         private static int Port => GetIntConfig("sync_udp_port", 49382);
         private static string Group => Database.GetConfig("sync_group") ?? "default";
@@ -206,8 +207,24 @@ namespace MedControl
                     switch (type)
                     {
                         case "CHANGE":
-                            // Ao receber, apenas sinalizamos para telas fazerem refresh (elas já fazem polling; isso torna quase instantâneo)
+                            // Ao receber, sinaliza refresh e, se for Cliente, busca diffs do Host em background
                             try { Database.SetConfig("last_change_at", DateTime.UtcNow.ToString("o")); } catch { }
+                            try
+                            {
+                                if (GroupConfig.Mode == GroupMode.Client && ShouldTryBackgroundPull())
+                                {
+                                    System.Threading.Tasks.Task.Run(() =>
+                                    {
+                                        try
+                                        {
+                                            var reservas = GroupClient.PullReservas(connectTimeoutMs: 600, ioTimeoutMs: 1200);
+                                            Database.ReplaceAllReservasLocalSilent(reservas);
+                                        }
+                                        catch { }
+                                    });
+                                }
+                            }
+                            catch { }
                             break;
                         case "BEACON":
                             try
@@ -283,6 +300,22 @@ namespace MedControl
                 }
                 catch { Thread.Sleep(200); }
             }
+        }
+
+        // Limita a frequência de pulls em resposta a eventos CHANGE para evitar tempestades
+        private static bool ShouldTryBackgroundPull()
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                if ((now - _lastBgPullUtc).TotalSeconds >= 2)
+                {
+                    _lastBgPullUtc = now;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         private static bool IsDuplicateChat(string id)

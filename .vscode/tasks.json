@@ -57,7 +57,7 @@
       "command": "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe",
       "args": [
         "/O${workspaceFolder}\\tools\\installer\\dist",
-        "/FMedControl-Setup-1.1.0",
+        "/FMedControl-Setup-1.2.0",
         "tools/installer/MedControl.iss"
       ],
       "options": {
