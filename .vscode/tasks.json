@@ -54,11 +54,24 @@
     {
       "label": "build installer (InnoSetup)",
       "type": "process",
-      "command": "ISCC",
+      "command": "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe",
       "args": [
+        "/O${workspaceFolder}\\tools\\installer\\dist",
+        "/FMedControl-Setup-1.1.0",
         "tools/installer/MedControl.iss"
       ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
+    },
+    {
+      "label": "publish + installer",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "publish (Release)",
+        "build installer (InnoSetup)"
+      ]
     }
   ]
 }

@@ -5,14 +5,17 @@
 [Setup]
 AppId={{A4E6E7C0-53C6-4C4F-A3A5-1C8B2C9E8A11}
 AppName=MedControl
-AppVersion=1.0.0
+AppVersion=1.1.0
 AppPublisher=MedControl
+; Ícone do instalador (usa o mesmo ícone do aplicativo)
+SetupIconFile=..\..\MedControl\Assets\app.ico
 DefaultDirName={autopf}\\MedControl
 DefaultGroupName=MedControl
 UninstallDisplayIcon={app}\\MedControl.exe
 Compression=lzma2
 SolidCompression=yes
-OutputDir=..\\dist
+; Salvar saída dentro da pasta do projeto para facilitar localização
+OutputDir=.\\dist
 OutputBaseFilename=MedControl-Setup
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=lowest

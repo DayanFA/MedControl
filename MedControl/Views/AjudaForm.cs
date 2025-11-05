@@ -30,7 +30,7 @@ namespace MedControl.Views
 
             var title = new Label
             {
-                Text = "MedControl",
+                Text = "MedControl Chat",
                 AutoSize = true,
                 Font = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Point),
                 Margin = new Padding(0, 0, 0, 8),
