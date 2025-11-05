@@ -16,7 +16,7 @@ namespace MedControl.Views
     private readonly DataGridView _grid = new DataGridView { Dock = DockStyle.None, AutoGenerateColumns = true };
     private readonly Panel _container = new Panel { Dock = DockStyle.Fill, Padding = new Padding(30, 12, 30, 12) }; // container with margin so grid is well-distributed
     private readonly TextBox _searchBox = new TextBox { Width = 300, PlaceholderText = "Pesquisar... 🔎" };
-    private readonly FlowLayoutPanel _topPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 120, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(8) };
+    private readonly FlowLayoutPanel _topPanel = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 64, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(8) };
     private readonly Button _importBtn = CreateButton("Importar", Color.FromArgb(33, 150, 243));
     private readonly Button _exportBtn = CreateButton("Exportar", Color.FromArgb(76, 175, 80));
     private readonly Button _addBtn = CreateButton("Adicionar", Color.FromArgb(0, 123, 255));
@@ -289,13 +289,13 @@ namespace MedControl.Views
             actions.Margin = new Padding(0, 6, 0, 6);
             // add actions first so they appear to the left of search
             _topPanel.Controls.Add(actions);
-            // Style search box: same height and vertical margins as buttons for alignment
+            // Style search box: same height and vertical margins as buttons for alignment (keep square corners like Professores)
             _searchBox.Font = new Font("Segoe UI", 10F, FontStyle.Regular);
             _searchBox.Height = 44;
             _searchBox.Margin = new Padding(12, 6, 8, 6);
             _searchBox.BorderStyle = BorderStyle.FixedSingle;
-            this.Load += (_, __) => Roundify(_searchBox, 12);
-            _searchBox.SizeChanged += (_, __) => Roundify(_searchBox, 12);
+            // ensure square corners
+            _searchBox.Region = null;
             _topPanel.Controls.Add(_searchBox);
 
             // Aplicar tema atual selecionado nas configurações

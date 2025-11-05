@@ -315,7 +315,8 @@ namespace MedControl
                             Height = 24,
                             TextAlign = ContentAlignment.MiddleCenter,
                             BackColor = GetCardColor(),
-                            Font = new Font("Segoe UI", 10, FontStyle.Bold)
+                            Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                            Tag = "keep-backcolor keep-font"
                         };
                         lbl.AutoEllipsis = true;
                         lbl.AutoSize = false;
@@ -335,7 +336,8 @@ namespace MedControl
                             Dock = DockStyle.Fill,
                             TextAlign = ContentAlignment.MiddleCenter,
                             BackColor = GetCardColor(),
-                            Font = new Font("Segoe UI", 9, FontStyle.Regular)
+                            Font = new Font("Segoe UI", 9, FontStyle.Regular),
+                            Tag = "keep-backcolor keep-font"
                         };
                         details.AutoSize = false;
                         details.Padding = new Padding(2);
@@ -350,7 +352,8 @@ namespace MedControl
                             Height = 18,
                             TextAlign = ContentAlignment.MiddleCenter,
                             BackColor = GetCardColor(),
-                            Font = new Font("Segoe UI", 8, FontStyle.Italic)
+                            Font = new Font("Segoe UI", 8, FontStyle.Italic),
+                            Tag = "keep-backcolor keep-font"
                         };
 
                         // Montagem

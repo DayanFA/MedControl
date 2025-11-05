@@ -62,6 +62,29 @@ namespace MedControl
             try { return _peers.Values.OrderByDescending(p => p.LastSeen).ToArray(); } catch { return Array.Empty<PeerInfo>(); }
         }
 
+        // Melhor estimativa de host atual baseado nos beacons recentes
+        public static bool TryGetBestHost(out string address, out int port)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var host = _peers.Values
+                    .Where(p => string.Equals(p.Role, "host", StringComparison.OrdinalIgnoreCase) && p.HostPort > 0)
+                    .OrderByDescending(p => p.LastSeen)
+                    .FirstOrDefault();
+                if (host != null && (now - host.LastSeen) < TimeSpan.FromSeconds(15))
+                {
+                    address = host.Address;
+                    port = host.HostPort;
+                    return true;
+                }
+            }
+            catch { }
+            address = string.Empty;
+            port = GroupConfig.HostPort;
+            return false;
+        }
+
         public static void Start()
         {
             if (_running) return;
@@ -81,6 +104,8 @@ namespace MedControl
                 _beaconTimer = new System.Threading.Timer(_ => SendBeacon(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5));
                 // envia um beacon inicial
                 SendBeacon();
+                // garante que este nó apareça imediatamente em "Usuários próximos"
+                TryAddOrUpdateSelfPeer();
             }
             catch { /* ignore */ }
         }
@@ -143,7 +168,7 @@ namespace MedControl
         // Força o envio imediato de um beacon (usado após mudança de papel Host/Client)
         public static void ForceBeacon()
         {
-            try { SendBeacon(); } catch { }
+            try { SendBeacon(); TryAddOrUpdateSelfPeer(); } catch { }
         }
 
         private static void Send(string payload)
@@ -188,15 +213,16 @@ namespace MedControl
                             try
                             {
                                 var node = parts.Length > 3 ? parts[3] : "?";
+                                if (string.IsNullOrWhiteSpace(node)) node = "?";
                                 var hint = parts.Length > 4 ? parts[4] : string.Empty;
                                 var role = parts.Length > 5 ? parts[5] : string.Empty;
                                 int hostPort = 0;
                                 if (parts.Length > 6) int.TryParse(parts[6], out hostPort);
                                 var addr = ep.Address.ToString();
-                                var key = node + "@" + addr;
-                                var info = _peers.AddOrUpdate(key, _ => new PeerInfo
+                                var key = (node ?? "?").Trim().ToLowerInvariant();
+                                _peers.AddOrUpdate(key, _ => new PeerInfo
                                 {
-                                    Node = node,
+                                    Node = node!,
                                     Address = addr,
                                     HostHint = hint,
                                     Role = role,
@@ -204,8 +230,9 @@ namespace MedControl
                                     LastSeen = DateTime.UtcNow
                                 }, (_, existing) =>
                                 {
-                                    existing.Node = node;
-                                    existing.Address = addr;
+                                    existing.Node = node!;
+                                    // Evita duplicação por 127.0.0.1: prefere endereço não-loopback quando disponível
+                                    if (PreferAddress(addr, existing.Address)) existing.Address = addr;
                                     existing.HostHint = hint;
                                     existing.Role = role;
                                     existing.HostPort = hostPort;
@@ -311,6 +338,87 @@ namespace MedControl
             }
             catch { }
             return "";
+        }
+
+        // Heurística de preferência de endereço: evita loopback (127.0.0.1), prefere IPv4 privada
+        private static bool PreferAddress(string candidate, string current)
+        {
+            try
+            {
+                int Score(string a)
+                {
+                    if (!IPAddress.TryParse(a, out var ip)) return 0;
+                    if (IPAddress.IsLoopback(ip)) return 1; // pior
+                    if (ip.AddressFamily == AddressFamily.InterNetwork)
+                    {
+                        // IPv4 privada: 10/8, 172.16/12, 192.168/16
+                        var bytes = ip.GetAddressBytes();
+                        bool isPrivate = bytes[0] == 10 || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || (bytes[0] == 192 && bytes[1] == 168);
+                        return isPrivate ? 4 : 3;
+                    }
+                    if (ip.AddressFamily == AddressFamily.InterNetworkV6) return 2;
+                    return 0;
+                }
+                return Score(candidate) >= Score(current);
+            }
+            catch { return false; }
+        }
+
+        // Tenta inserir/atualizar a presença do próprio nó na lista de peers (para aparecer de imediato no UI)
+        public static void TryAddOrUpdateSelfPeer()
+        {
+            try
+            {
+                var node = LocalNodeName();
+                var addr = GetLocalPreferredAddress();
+                var role = GroupConfig.Mode == GroupMode.Host ? "host" : GroupConfig.Mode == GroupMode.Client ? "client" : "solo";
+                var hostPort = GroupConfig.HostPort;
+                var key = node.Trim().ToLowerInvariant();
+                _peers.AddOrUpdate(key, _ => new PeerInfo
+                {
+                    Node = node,
+                    Address = addr,
+                    HostHint = GetHostHint(),
+                    Role = role,
+                    HostPort = hostPort,
+                    LastSeen = DateTime.UtcNow
+                }, (_, existing) =>
+                {
+                    existing.Node = node;
+                    if (PreferAddress(addr, existing.Address)) existing.Address = addr;
+                    existing.Role = role;
+                    existing.HostPort = hostPort;
+                    existing.HostHint = GetHostHint();
+                    existing.LastSeen = DateTime.UtcNow;
+                    return existing;
+                });
+                PeersChanged?.Invoke();
+            }
+            catch { }
+        }
+
+        private static string GetLocalPreferredAddress()
+        {
+            try
+            {
+                // Método de detecção confiável: conecta a um IP externo sem enviar dados para obter o IP local
+                using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                try { s.Connect("1.1.1.1", 80); }
+                catch { try { s.Connect("8.8.8.8", 80); } catch { } }
+                if (s.LocalEndPoint is IPEndPoint lep) return lep.Address.ToString();
+            }
+            catch { }
+            try
+            {
+                var host = Dns.GetHostEntry(Dns.GetHostName());
+                foreach (var ip in host.AddressList)
+                {
+                    if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+                        return ip.ToString();
+                }
+            }
+            catch { }
+            return "127.0.0.1";
         }
     }
 }

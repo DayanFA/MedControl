@@ -69,6 +69,25 @@ namespace MedControl
                     using var doc = JsonDocument.Parse(line);
                     var root = doc.RootElement;
                     var type = root.GetProperty("type").GetString() ?? "";
+
+                    // Atende "hello" sem exigir autenticação, para permitir que clientes descubram o nome do grupo/porta do Host
+                    if (string.Equals(type, "hello", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var payload = new
+                        {
+                            ok = true,
+                            data = new { group = GroupConfig.GroupName ?? "default", port = GroupConfig.HostPort }
+                        };
+                        writer.WriteLine(JsonSerializer.Serialize(payload));
+                        return;
+                    }
+
+                    // Autorização simples por grupo/senha para os demais tipos
+                    if (!ValidateAuth(root, out var authError))
+                    {
+                        writer.WriteLine(JsonSerializer.Serialize(new { ok = false, error = authError }));
+                        return;
+                    }
                     switch (type)
                     {
                         case "ping":
@@ -90,6 +109,35 @@ namespace MedControl
                     var msg = JsonSerializer.Serialize(new { ok = false, error = ex.Message });
                     writer.WriteLine(msg);
                 }
+            }
+        }
+
+        private static bool ValidateAuth(JsonElement root, out string error)
+        {
+            try
+            {
+                var reqGroup = root.TryGetProperty("group", out var g) ? (g.GetString() ?? string.Empty) : string.Empty;
+                var reqAuth = root.TryGetProperty("auth", out var a) ? (a.GetString() ?? string.Empty) : string.Empty;
+                var groupOk = string.Equals(reqGroup, GroupConfig.GroupName ?? "default", StringComparison.Ordinal);
+                var pass = GroupConfig.GroupPassword ?? string.Empty;
+                var authOk = string.IsNullOrEmpty(pass) || string.Equals(reqAuth, pass, StringComparison.Ordinal);
+                if (!groupOk)
+                {
+                    error = "grupo incorreto";
+                    return false;
+                }
+                if (!authOk)
+                {
+                    error = "senha inválida";
+                    return false;
+                }
+                error = string.Empty;
+                return true;
+            }
+            catch
+            {
+                error = "erro de autenticação";
+                return false;
             }
         }
 

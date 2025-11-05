@@ -15,6 +15,10 @@ namespace MedControl
         private static DateTime _lastRoleChange = DateTime.MinValue;
         private static readonly TimeSpan RoleChangeCooldown = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan HostStaleAfter = TimeSpan.FromSeconds(12);
+        private static DateTime _lastHostSeenUtc = DateTime.MinValue;
+        private static DateTime _lastReconnectTryUtc = DateTime.MinValue;
+        private static readonly TimeSpan PromotionGrace = TimeSpan.FromSeconds(8);
+        private static readonly TimeSpan ReconnectTryCooldown = TimeSpan.FromSeconds(4);
 
         public static void Start()
         {
@@ -49,6 +53,7 @@ namespace MedControl
 
                 if (hasFreshHost)
                 {
+                    _lastHostSeenUtc = now;
                     // Se eu sou o host anunciado, garante modo Host ativo
                     if (string.Equals(hostPeer!.Node, meName, StringComparison.OrdinalIgnoreCase))
                     {
@@ -65,7 +70,35 @@ namespace MedControl
                     }
                 }
 
-                // 2) Não há host atual: eleição determinística com prioridade "aleatória"
+                // 2) Não há host atual: antes de eleger novo Host, tenta reconectar ao host conhecido
+                if (GroupConfig.Mode == GroupMode.Client && !string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                {
+                    bool withinGrace = _lastHostSeenUtc != DateTime.MinValue && (now - _lastHostSeenUtc) < PromotionGrace;
+                    bool canTryReconnect = (now - _lastReconnectTryUtc) > ReconnectTryCooldown;
+                    if (withinGrace || canTryReconnect)
+                    {
+                        _lastReconnectTryUtc = now;
+                        try
+                        {
+                            // Tenta ping direto ao host previamente configurado (sem depender de beacon)
+                            if (GroupClient.Ping(out var _msg, connectTimeoutMs: 1200, ioTimeoutMs: 1500))
+                            {
+                                EnsureMode(GroupMode.Client, GroupConfig.HostAddress);
+                                try { SyncService.ForceBeacon(); } catch { }
+                                return;
+                            }
+                        }
+                        catch { /* ignora e segue lógica */ }
+
+                        // Se ainda estamos no período de graça, aguarda mais um ciclo antes de promover novo host
+                        if (withinGrace)
+                        {
+                            return;
+                        }
+                    }
+                }
+
+                // 3) Não conseguiu reconectar: eleição determinística com prioridade "aleatória"
                 // Usa hash (SHA-256) de (group + '|' + node) para ordenar pseudo-aleatoriamente, mas de forma consistente entre nós
                 var group = GroupConfig.GroupName ?? "default";
                 var candidateNames = peers.Select(p => p.Node)

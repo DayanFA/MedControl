@@ -36,6 +36,29 @@
         "${workspaceFolder}/MedControl/MedControl.csproj"
       ],
       "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "publish (Release)",
+      "type": "process",
+      "command": "dotnet",
+      "args": [
+        "publish",
+        "${workspaceFolder}/MedControl/MedControl.csproj",
+        "-c",
+        "Release",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary;ForceNoAlign"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "build installer (InnoSetup)",
+      "type": "process",
+      "command": "ISCC",
+      "args": [
+        "tools/installer/MedControl.iss"
+      ],
+      "problemMatcher": []
     }
   ]
 }

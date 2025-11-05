@@ -39,7 +39,7 @@ namespace MedControl.Views
 
             var version = new Label
             {
-                Text = "v 1.0.0",
+                Text = $"v {GetVersionString()}",
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
                 Margin = new Padding(0, 0, 0, 12)
@@ -83,16 +83,51 @@ namespace MedControl.Views
                 try { Process.Start(new ProcessStartInfo { FileName = "https://github.com/DayanFA/MedControl", UseShellExecute = true }); } catch { }
             };
 
+            var btnUpdate = new Button
+            {
+                Text = "Procurar atualização",
+                AutoSize = true,
+                Margin = new Padding(0, 8, 0, 0)
+            };
+            btnUpdate.Click += async (_, __) =>
+            {
+                try
+                {
+                    btnUpdate.Enabled = false;
+                    var prev = btnUpdate.Text;
+                    btnUpdate.Text = "Procurando...";
+                    await MedControl.UpdateService.CheckNowAsync(this);
+                    btnUpdate.Text = prev;
+                    btnUpdate.Enabled = true;
+                }
+                catch { btnUpdate.Enabled = true; }
+            };
+
             main.Controls.Add(title);
             main.Controls.Add(version);
             main.Controls.Add(desc);
             main.Controls.Add(lic);
             main.Controls.Add(linkIntro);
             main.Controls.Add(link);
+            main.Controls.Add(btnUpdate);
             Controls.Add(main);
 
             // Aplicar tema atual
             try { MedControl.UI.ThemeHelper.ApplyCurrentTheme(this); } catch { }
+        }
+
+        private static string GetVersionString()
+        {
+            try
+            {
+                var v = Application.ProductVersion;
+                // Normaliza para Major.Minor.Build
+                var parts = v.Split('.');
+                if (parts.Length >= 3)
+                    return string.Join('.', parts[0], parts[1], parts[2]);
+                return v;
+            }
+            catch { return "1.0.0"; }
         }
     }
 }

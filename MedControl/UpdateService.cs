@@ -107,6 +107,39 @@ namespace MedControl
             catch { }
         }
 
+        // Public method to check now and inform the user even when up-to-date
+        public static async Task CheckNowAsync(IWin32Window? owner = null)
+        {
+            try
+            {
+                var cur = GetCurrentVersion();
+                var (latest, url) = await GetLatestReleaseAsync();
+                if (latest == null)
+                {
+                    MessageBox.Show(owner ?? new Form(), "Não foi possível verificar atualizações agora.", "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                if (latest <= cur)
+                {
+                    MessageBox.Show(owner ?? new Form(), $"Você já está na versão mais recente ({cur}).", "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(url))
+                {
+                    MessageBox.Show(owner ?? new Form(), $"Nova versão disponível ({latest}), mas não há instalador anexado à release.", "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var dr = MessageBox.Show(owner ?? new Form(), $"Uma nova versão do MedControl está disponível (atual: {cur}, nova: {latest}).\n\nDeseja baixar e instalar agora?", "Atualização disponível", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (dr != DialogResult.Yes) return;
+                await DownloadAndRunInstallerAsync(url);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(owner ?? new Form(), "Erro ao verificar atualização: " + ex.Message, "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         private static async Task DownloadAndRunInstallerAsync(string url)
         {
             string tempFile = Path.Combine(Path.GetTempPath(), $"MedControl-Setup-{Guid.NewGuid():N}.exe");

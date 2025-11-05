@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace MedControl
@@ -39,33 +40,66 @@ namespace MedControl
             return c;
         }
 
-        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 200)
+        private static (bool ok, string? error, string? data) Send(object req, int connectTimeoutMs = 200, int ioTimeoutMs = 400, int attempts = 1)
         {
             try
             {
-                var host = GroupConfig.HostAddress;
-                var port = GroupConfig.HostPort;
-                var parts = host.Split(':');
-                string hostOnly = parts[0];
-                if (parts.Length > 1 && int.TryParse(parts[1], out var p)) port = p;
+                // Resolve destino: prefere host descoberto pelo grupo; cai para HostAddress
+                string hostOnly = string.Empty;
+                int port = GroupConfig.HostPort;
+                if (GroupConfig.Mode == GroupMode.Client && SyncService.TryGetBestHost(out var addr, out var prt))
+                {
+                    hostOnly = addr;
+                    port = prt;
+                }
+                else
+                {
+                    var host = GroupConfig.HostAddress;
+                    var parts = host.Split(':');
+                    hostOnly = parts[0];
+                    if (parts.Length > 1 && int.TryParse(parts[1], out var p)) port = p;
+                }
 
-                using var c = ConnectWithTimeout(hostOnly, port, connectTimeoutMs);
-                c.NoDelay = true;
-                c.ReceiveTimeout = 300; c.SendTimeout = 300;
-                using var ns = c.GetStream();
-                using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
-                using var reader = new StreamReader(ns, Encoding.UTF8, false);
-                var json = JsonSerializer.Serialize(req);
-                writer.WriteLine(json);
-                var line = reader.ReadLine();
-                if (string.IsNullOrWhiteSpace(line)) { MarkFail(); return (false, "empty response", null); }
-                using var doc = JsonDocument.Parse(line);
-                var root = doc.RootElement;
-                var ok = root.GetProperty("ok").GetBoolean();
-                string? err = root.TryGetProperty("error", out var e) ? e.GetString() : null;
-                string? data = root.TryGetProperty("data", out var d) ? d.GetRawText() : null;
-                if (ok) MarkSuccess(); else MarkFail();
-                return (ok, err, data);
+                Exception? lastEx = null;
+                for (int i = 0; i < Math.Max(1, attempts); i++)
+                {
+                    var ct = i == 0 ? connectTimeoutMs : (i == 1 ? Math.Max(600, connectTimeoutMs * 3) : 3000);
+                    var io = i == 0 ? ioTimeoutMs : Math.Max(ioTimeoutMs, (int)(ct * 1.5));
+                    try
+                    {
+                        using var c = ConnectWithTimeout(hostOnly, port, ct);
+                        c.NoDelay = true;
+                        c.ReceiveTimeout = io; c.SendTimeout = io;
+                        using var ns = c.GetStream();
+                        using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
+                        using var reader = new StreamReader(ns, Encoding.UTF8, false);
+                        // Empacota grupo/senha em todas as requisições
+                        var json = MergeWithAuth(req);
+                        writer.WriteLine(json);
+                        var line = reader.ReadLine();
+                        if (string.IsNullOrWhiteSpace(line)) { lastEx = new IOException("empty response"); throw lastEx; }
+                        using var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        var ok = root.GetProperty("ok").GetBoolean();
+                        string? err = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+                        string? data = root.TryGetProperty("data", out var d) ? d.GetRawText() : null;
+                        if (ok) MarkSuccess(); else MarkFail();
+                        return (ok, err, data);
+                    }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                        // se ainda há tentativas, continua; caso contrário, propaga
+                        if (i < attempts - 1)
+                        {
+                            try { System.Threading.Thread.Sleep(100); } catch { }
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                MarkFail();
+                throw lastEx ?? new IOException("Falha de comunicação");
             }
             catch
             {
@@ -74,11 +108,62 @@ namespace MedControl
             }
         }
 
-        public static bool Ping(out string? message)
+        public static bool Ping(out string? message, int connectTimeoutMs = 150, int ioTimeoutMs = 400)
         {
-            try { var r = Send(new { type = "ping" }, connectTimeoutMs: 150); if (r.ok) MarkSuccess(); else MarkFail(); message = r.data; return r.ok; } catch (Exception ex) { message = ex.Message; MarkFail(); return false; }
+            try { var ok = Ping(out message, out var _rtt, connectTimeoutMs, ioTimeoutMs); return ok; } catch (Exception ex) { message = ex.Message; MarkFail(); return false; }
         }
 
+        public static bool Ping(out string? message, out int rttMs, int connectTimeoutMs = 150, int ioTimeoutMs = 400)
+        {
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                var r = Send(new { type = "ping" }, connectTimeoutMs: connectTimeoutMs, ioTimeoutMs: ioTimeoutMs, attempts: 1);
+                sw.Stop();
+                rttMs = (int)Math.Max(0, sw.Elapsed.TotalMilliseconds);
+                if (r.ok) MarkSuccess(); else MarkFail();
+                message = r.data;
+                return r.ok;
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                rttMs = -1;
+                message = ex.Message;
+                MarkFail();
+                return false;
+            }
+        }
+
+        // Obtém informações básicas do Host sem exigir autenticação (nome do grupo e porta)
+        public static bool Hello(out string? groupName, out int port, out string? error, int connectTimeoutMs = 300, int ioTimeoutMs = 500)
+        {
+            groupName = null; port = GroupConfig.HostPort; error = null;
+            try
+            {
+                var r = Send(new { type = "hello" }, connectTimeoutMs: connectTimeoutMs, ioTimeoutMs: ioTimeoutMs, attempts: 1);
+                if (!r.ok)
+                {
+                    error = r.error ?? "hello falhou";
+                    return false;
+                }
+                if (string.IsNullOrWhiteSpace(r.data))
+                {
+                    error = "resposta vazia";
+                    return false;
+                }
+                using var doc = JsonDocument.Parse(r.data);
+                var root = doc.RootElement;
+                groupName = root.TryGetProperty("group", out var g) ? (g.GetString() ?? "default") : "default";
+                port = root.TryGetProperty("port", out var p) && p.TryGetInt32(out var pp) ? pp : GroupConfig.HostPort;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
         // Encaminhadores de escrita
         public static void InsertReserva(Reserva r) => Send(new { type = "write", entity = "reserva", data = r });
         public static void UpdateReserva(Reserva r) => Send(new { type = "write", entity = "reserva_update", data = r });
@@ -89,34 +174,61 @@ namespace MedControl
         public static void ReplaceAllProfessores(System.Data.DataTable table) => Send(new { type = "write", entity = "professores_replace", data = JsonTableHelper.SerializeDataTable(table) });
 
         // Pulls
-        public static System.Collections.Generic.List<Chave> PullChaves()
+        public static System.Collections.Generic.List<Chave> PullChaves(int connectTimeoutMs = 200, int ioTimeoutMs = 600)
         {
-            var r = Send(new { type = "pull", entity = "chaves" });
+            var r = Send(new { type = "pull", entity = "chaves" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);
             return r.ok && r.data != null ? JsonSerializer.Deserialize<System.Collections.Generic.List<Chave>>(r.data) ?? new() : new();
         }
 
-        public static System.Collections.Generic.List<Relatorio> PullRelatorio()
+        public static System.Collections.Generic.List<Relatorio> PullRelatorio(int connectTimeoutMs = 200, int ioTimeoutMs = 600)
         {
-            var r = Send(new { type = "pull", entity = "relatorio" });
+            var r = Send(new { type = "pull", entity = "relatorio" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);
             return r.ok && r.data != null ? JsonSerializer.Deserialize<System.Collections.Generic.List<Relatorio>>(r.data) ?? new() : new();
         }
 
-        public static System.Collections.Generic.List<Reserva> PullReservas()
+        public static System.Collections.Generic.List<Reserva> PullReservas(int connectTimeoutMs = 200, int ioTimeoutMs = 600)
         {
-            var r = Send(new { type = "pull", entity = "reservas" });
+            var r = Send(new { type = "pull", entity = "reservas" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);
             return r.ok && r.data != null ? JsonSerializer.Deserialize<System.Collections.Generic.List<Reserva>>(r.data) ?? new() : new();
         }
 
-        public static System.Data.DataTable PullAlunos()
+        public static System.Data.DataTable PullAlunos(int connectTimeoutMs = 200, int ioTimeoutMs = 800)
         {
-            var r = Send(new { type = "pull", entity = "alunos" });
+            var r = Send(new { type = "pull", entity = "alunos" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);
             return r.ok && r.data != null ? JsonTableHelper.DeserializeToDataTable(r.data) : new System.Data.DataTable();
         }
 
-        public static System.Data.DataTable PullProfessores()
+        public static System.Data.DataTable PullProfessores(int connectTimeoutMs = 200, int ioTimeoutMs = 800)
         {
-            var r = Send(new { type = "pull", entity = "professores" });
+            var r = Send(new { type = "pull", entity = "professores" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);
             return r.ok && r.data != null ? JsonTableHelper.DeserializeToDataTable(r.data) : new System.Data.DataTable();
+        }
+
+        private static string MergeWithAuth(object req)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(JsonSerializer.Serialize(req));
+                var root = doc.RootElement;
+                using var stream = new MemoryStream();
+                using (var writer = new Utf8JsonWriter(stream))
+                {
+                    writer.WriteStartObject();
+                    foreach (var prop in root.EnumerateObject()) prop.WriteTo(writer);
+                    writer.WriteString("group", GroupConfig.GroupName ?? "default");
+                    var pass = GroupConfig.GroupPassword ?? string.Empty;
+                    if (!string.IsNullOrEmpty(pass)) writer.WriteString("auth", pass);
+                    writer.WriteEndObject();
+                }
+                return Encoding.UTF8.GetString(stream.ToArray());
+            }
+            catch
+            {
+                // fallback simples
+                var pass = GroupConfig.GroupPassword ?? string.Empty;
+                var grp = GroupConfig.GroupName ?? "default";
+                return JsonSerializer.Serialize(new { req, group = grp, auth = pass });
+            }
         }
     }
 }

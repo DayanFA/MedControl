@@ -13,27 +13,35 @@ namespace MedControl.Views
         private TextBox _groupName;
         private TextBox _groupHost;
         private TextBox _groupPort;
-        private Button _testConn;
-    private Button _saveBtn;
-    private Button _connectBtn;
+        private TextBox _groupPassword;
+    private Button _testConn;
+        private Button _saveBtn;
+        private Button _connectBtn;
+    private Button _createGroupBtn;
         private ListView _peersList;
         private RichTextBox _chatLog;
         private TextBox _messageBox;
         private Button _sendBtn;
-    private Button _emojiBtn;
-    private ContextMenuStrip _emojiMenu;
-        private Label _lblMode;
+        private Button _emojiBtn;
+        private ContextMenuStrip _emojiMenu;
+    private Label _lblMode;
         private Label _lblGroup;
-        private Label _lblHost;
-    private Label _lblSelf;
-    private Label _lblStatus;
+    private Label _lblHost;
+        private Label _lblSelf;
+        private Label _lblStatus;
+    // Config labels to toggle visibility
+    private Label _cfgLblHost;
+    private Label _cfgLblPort;
+    private Label _cfgLblPwd;
         private System.Windows.Forms.Timer _uiTimer;
-    private System.Windows.Forms.Timer? _statusTimer;
-    private Panel _loadingPanel;
-    private ProgressBar _loadingBar;
-    private Label _loadingLabel;
-    private volatile bool _pendingPeersUpdate;
-    private bool _firstPeersLoad = true;
+        private System.Windows.Forms.Timer? _statusTimer;
+        private Panel _loadingPanel;
+        private ProgressBar _loadingBar;
+        private Label _loadingLabel;
+        private volatile bool _pendingPeersUpdate;
+        private bool _firstPeersLoad = true;
+        private bool _autoReconnectInProgress = false;
+        private bool _wasOnline = false;
 
         public ConexoesForm()
         {
@@ -91,9 +99,11 @@ namespace MedControl.Views
             _groupName = new TextBox { Dock = DockStyle.Fill };
             _groupHost = new TextBox { Dock = DockStyle.Fill };
             _groupPort = new TextBox { Dock = DockStyle.Fill };
+            _groupPassword = new TextBox { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
             _testConn = new Button { Text = "Testar Conexão", AutoSize = true };
             _saveBtn = new Button { Text = "Salvar", AutoSize = true };
             _connectBtn = new Button { Text = "Conectar", AutoSize = true };
+            _createGroupBtn = new Button { Text = "Criar grupo (Host)", AutoSize = true };
 
             cfg.Controls.Add(Mk("Modo de Grupo:"), 0, 0);
             cfg.Controls.Add(_groupMode, 1, 0);
@@ -103,19 +113,29 @@ namespace MedControl.Views
             cfg.Controls.Add(_groupName, 1, 1);
             cfg.Controls.Add(new Label { Text = "(ex.: lab1)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 1);
 
-            cfg.Controls.Add(Mk("Host (Cliente → host:porta):"), 0, 2);
+            _cfgLblHost = Mk("Host (modo Host):");
+            cfg.Controls.Add(_cfgLblHost, 0, 2);
             cfg.Controls.Add(_groupHost, 1, 2);
             cfg.Controls.Add(_testConn, 2, 2);
 
-            cfg.Controls.Add(Mk("Porta do Host:"), 0, 3);
+            _cfgLblPort = Mk("Porta do Host:");
+            cfg.Controls.Add(_cfgLblPort, 0, 3);
             cfg.Controls.Add(_groupPort, 1, 3);
             cfg.Controls.Add(new Label { Text = "(padrão 49383)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 3);
 
+            _cfgLblPwd = Mk("Senha do Grupo:");
+            cfg.Controls.Add(_cfgLblPwd, 0, 4);
+            cfg.Controls.Add(_groupPassword, 1, 4);
+            cfg.Controls.Add(new Label { Text = "(opcional)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
+
             // Removido campo de apelido do dispositivo a pedido do usuário
 
-            cfg.Controls.Add(new Label { Text = " " }, 0, 5);
-            cfg.Controls.Add(_connectBtn, 1, 5);
-            cfg.Controls.Add(_saveBtn, 2, 5);
+            // Botão de criar grupo/ser Host agora
+            cfg.Controls.Add(_createGroupBtn, 2, 5);
+
+            cfg.Controls.Add(new Label { Text = " " }, 0, 6);
+            cfg.Controls.Add(_connectBtn, 1, 6);
+            cfg.Controls.Add(_saveBtn, 2, 6);
 
             // Peers list
             _peersList = new ListView
@@ -190,7 +210,6 @@ namespace MedControl.Views
             {
                 try
                 {
-                    // Atualiza visto e aplica refresh apenas quando necessário ou no primeiro load
                     if (_firstPeersLoad || _pendingPeersUpdate)
                     {
                         RefreshPeers();
@@ -240,6 +259,7 @@ namespace MedControl.Views
                 _groupName.Text = GroupConfig.GroupName;
                 _groupHost.Text = GroupConfig.HostAddress;
                 _groupPort.Text = GroupConfig.HostPort.ToString();
+                _groupPassword.Text = GroupConfig.GroupPassword;
                 // Campo de apelido removido; mantemos configuração existente sem expor no UI
             }
             catch { }
@@ -248,27 +268,29 @@ namespace MedControl.Views
             _testConn.Click += (_, __) => DoTestConn();
             _saveBtn.Click += (_, __) => DoSave();
             _connectBtn.Click += (_, __) => DoConnect();
+            _createGroupBtn.Click += (_, __) => DoCreateGroup();
             
             void DoSave()
             {
                 try
                 {
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
-                    // Sempre atualiza host/porta/nome/alias a partir dos campos
+                    // Sempre atualiza nome/porta/host/senha a partir dos campos
                     GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
                     if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
                     GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+                    GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
                     // Campo de apelido removido; não alterar node_alias aqui
 
+                    GroupConfig.Mode = m; // Persistir modo imediatamente, inclusive Cliente
                     if (m == GroupMode.Client)
                     {
-                        // No modo Cliente, ao salvar já executa a sincronização com loading
+                        // No modo Cliente, ao salvar já executa a sincronização com loading (sem exigir IP)
                         DoConnect();
                         return;
                     }
 
                     // Para Host/Offline: aplica e salva normalmente
-                    GroupConfig.Mode = m;
                     try { if (m == GroupMode.Host) GroupHost.Start(); else GroupHost.Stop(); } catch { }
 
                     _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
@@ -315,15 +337,32 @@ namespace MedControl.Views
             try
             {
                 var isClient = _groupMode.SelectedIndex == 2;
-                _groupHost.Enabled = isClient;
-                _groupPort.Enabled = isClient;
+                // Em modo Cliente é opcional informar IP/Porta do Host para forçar conexão manual
+                _groupHost.Visible = isClient;
+                _cfgLblHost.Visible = isClient;
+                _groupPort.Visible = true; // Porta é sempre relevante (Host usa para escutar; Cliente para conectar)
+                _cfgLblPort.Visible = true;
+                try { if (isClient) _cfgLblHost.Text = "Host (opcional):"; } catch { }
+                // Senha do grupo é relevante em Cliente e Host
+                _groupPassword.Visible = true;
+                _cfgLblPwd.Visible = true;
                 _testConn.Enabled = isClient;
                 _connectBtn.Enabled = isClient;
+                _createGroupBtn.Enabled = !isClient; // criar grupo faz sentido em Host/Offline
+
+                // No modo Cliente, capturamos o nome do grupo automaticamente; desabilita a edição
+                _groupName.Enabled = !isClient;
+                if (isClient && string.IsNullOrWhiteSpace(_groupName.Text))
+                {
+                    _groupName.Text = "(automático)";
+                }
             }
             catch { }
         }
 
-        private void DoConnect()
+        private void DoConnect() => DoConnect(false);
+
+        private void DoConnect(bool auto)
         {
             try
             {
@@ -333,9 +372,36 @@ namespace MedControl.Views
                     return;
                 }
 
+                // Exigir senha do grupo para Cliente
+                if (string.IsNullOrWhiteSpace(_groupPassword.Text))
+                {
+                    MessageBox.Show(this, "Informe a senha do grupo para conectar como Cliente.", "Senha obrigatória", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                // Aplica senha ao config (nome pode ser capturado automaticamente)
+                GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
+
                 // Aplica temporariamente host/porta informados
                 if (int.TryParse(_groupPort.Text?.Trim(), out var p) && p > 0) GroupConfig.HostPort = p;
                 GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+
+                // Se houver Host informado, tenta descobrir automaticamente o nome do grupo/porta
+                if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                {
+                    if (GroupClient.Hello(out var gname, out var hport, out var herr))
+                    {
+                        GroupConfig.GroupName = gname ?? "default";
+                        GroupConfig.HostPort = hport;
+                        _groupName.Text = GroupConfig.GroupName;
+                        _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
+                    }
+                }
+
+                // Se ainda não houver nome, usa o campo ou default
+                GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) || string.Equals(_groupName.Text.Trim(), "(automático)", StringComparison.OrdinalIgnoreCase)
+                    ? (GroupConfig.GroupName ?? "default")
+                    : _groupName.Text.Trim();
 
                 using var dlg = new SyncProgressForm();
                 dlg.StartPosition = FormStartPosition.CenterParent;
@@ -362,7 +428,7 @@ namespace MedControl.Views
                     {
                         // Verifica host
                         Progress("Verificando host...");
-                        if (!GroupClient.Ping(out var msg))
+                        if (!GroupClient.Ping(out var msg, connectTimeoutMs: 1500, ioTimeoutMs: 2000))
                             throw new Exception(string.IsNullOrWhiteSpace(msg) ? "Host indisponível" : msg);
 
                         // Baixa e importa
@@ -403,7 +469,11 @@ namespace MedControl.Views
                             _lblHost.Text = $"Host/Porta: {host}";
                             _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
                             UpdateStatusTimerMode();
-                            MessageBox.Show(this, "Conectado e sincronizado com sucesso.", "Cliente", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            _wasOnline = true;
+                            try { MedControl.SyncService.ForceBeacon(); } catch { }
+                            try { MedControl.SyncService.TryAddOrUpdateSelfPeer(); } catch { }
+                            if (!auto)
+                                MessageBox.Show(this, "Conectado e sincronizado com sucesso.", "Cliente", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }));
                     }
                     catch (Exception ex)
@@ -411,7 +481,8 @@ namespace MedControl.Views
                         try { dlg.BeginInvoke(new Action(() => dlg.Close())); } catch { }
                         BeginInvoke(new Action(() =>
                         {
-                            MessageBox.Show(this, "Falha ao conectar/sincronizar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            if (!auto)
+                                MessageBox.Show(this, "Falha ao conectar/sincronizar: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
                             UpdateStatusTimerMode();
                         }));
                     }
@@ -430,6 +501,31 @@ namespace MedControl.Views
             }
         }
 
+        private void DoCreateGroup()
+        {
+            try
+            {
+                // Define grupo e senha, torna-se Host e anuncia
+                GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
+                GroupConfig.Mode = GroupMode.Host;
+                try { GroupHost.Start(); } catch { }
+                try { SyncService.ForceBeacon(); } catch { }
+                // Atualiza cabeçalho
+                _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
+                _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
+                var host = $"localhost:{GroupConfig.HostPort}";
+                _lblHost.Text = $"Host/Porta: {host}";
+                _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
+                UpdateStatusTimerMode();
+                MessageBox.Show(this, "Grupo criado neste dispositivo. Outros clientes podem entrar pelo nome e senha do grupo.", "Host ativo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Falha ao criar grupo: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         private void DoTestConn()
         {
             try
@@ -441,8 +537,22 @@ namespace MedControl.Views
                 }
                 if (int.TryParse(_groupPort.Text?.Trim(), out var p) && p > 0) GroupConfig.HostPort = p;
                 GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
-                var ok = GroupClient.Ping(out var msg);
-                MessageBox.Show(this, ok ? ($"Conectado ao Host. Resposta: {msg}") : ($"Falha: {msg}"));
+                var ok = GroupClient.Ping(out var msg, connectTimeoutMs: 1200, ioTimeoutMs: 1500);
+                    // Tenta descobrir automaticamente o nome do grupo do Host informado se o Host estiver preenchido
+                    if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                    {
+                        if (GroupClient.Hello(out var gname, out var hport, out var herr))
+                        {
+                            GroupConfig.GroupName = gname ?? "default";
+                            GroupConfig.HostPort = hport;
+                            _groupName.Text = GroupConfig.GroupName;
+                            _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
+                        }
+                        else if (!string.IsNullOrWhiteSpace(herr))
+                        {
+                            // Não bloqueia o teste, apenas informa em detalhe
+                        }
+                    }
                 UpdateStatusBadge(ok, ok ? "" : msg ?? "");
             }
             catch (Exception ex)
@@ -451,34 +561,7 @@ namespace MedControl.Views
             }
         }
 
-        private void DoSave()
-        {
-            try
-            {
-                var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
-                GroupConfig.Mode = m;
-                GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
-                if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
-                GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
-                try { if (m == GroupMode.Host) GroupHost.Start(); else GroupHost.Stop(); } catch { }
-
-                // Update header labels
-                _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
-                _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
-                var host = GroupConfig.Mode == GroupMode.Host ? $"localhost:{GroupConfig.HostPort}" : GroupConfig.HostAddress;
-                if (string.IsNullOrWhiteSpace(host)) host = $"porta {GroupConfig.HostPort}";
-                _lblHost.Text = $"Host/Porta: {host}";
-
-                MessageBox.Show(this, "Conexões salvas.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-                // Restart status/ping policy based on new mode
-                UpdateStatusTimerMode();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Erro ao salvar conexões: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-        }
+        // Removido método DoSave separado; usamos a função local em OnLoaded
 
         private void RefreshPeers()
         {
@@ -554,12 +637,54 @@ namespace MedControl.Views
                 {
                     bool ok;
                     string? msg;
-                    try { ok = GroupClient.Ping(out msg); }
+                    int rtt = -1;
+                    try { ok = GroupClient.Ping(out msg, out rtt); }
                     catch (Exception ex) { ok = false; msg = ex.Message; }
                     try
                     {
                         if (IsHandleCreated)
-                            BeginInvoke(new Action(() => UpdateStatusBadge(ok, ok ? "" : msg ?? "")));
+                            BeginInvoke(new Action(() =>
+                            {
+                                var detail = ok ? (rtt >= 0 ? $"{rtt} ms" : "") : (msg ?? "");
+                                UpdateStatusBadge(ok, detail);
+                            }));
+                    }
+                    catch { }
+
+                    try
+                    {
+                        if (GroupConfig.Mode == GroupMode.Client)
+                        {
+                            if (ok)
+                            {
+                                // Se voltamos a ficar online e ainda não estávamos marcados como online, tenta reconectar/sincronizar automaticamente
+                                if (!_wasOnline && !_autoReconnectInProgress)
+                                {
+                                    _autoReconnectInProgress = true;
+                                    if (IsHandleCreated)
+                                    {
+                                        try
+                                        {
+                                            BeginInvoke(new Action(() =>
+                                            {
+                                                try { DoConnect(true); }
+                                                finally { _autoReconnectInProgress = false; }
+                                            }));
+                                        }
+                                        catch { _autoReconnectInProgress = false; }
+                                    }
+                                    else
+                                    {
+                                        _autoReconnectInProgress = false;
+                                    }
+                                }
+                                _wasOnline = true;
+                            }
+                            else
+                            {
+                                _wasOnline = false;
+                            }
+                        }
                     }
                     catch { }
                 });

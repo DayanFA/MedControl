@@ -9,6 +9,23 @@ namespace MedControl.UI
     public static class ThemeHelper
     {
         private static Icon? _appIcon;
+        
+        // Helpers to detect tagged controls
+        private static bool HasKeepBackcolorTag(Control c)
+        {
+            try { return (c.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; }
+        }
+
+        private static bool IsAccentButton(Control c)
+        {
+            return c is Button b && (b.Tag as string) == "accent";
+        }
+
+        private static bool IsKeepBackcolorControl(Control c)
+        {
+            if (HasKeepBackcolorTag(c)) return true;
+            try { return c is MedControl.UI.SquareCardPanel; } catch { return false; }
+        }
 
         // Tenta carregar o ícone do app a partir de Assets/app.ico (preferido) ou Assets/app.png
         private static Icon? TryLoadAppIcon()
@@ -140,7 +157,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = classicFont;
                     }
                     catch { }
@@ -171,10 +188,10 @@ namespace MedControl.UI
                         c.BackColor = SystemColors.Control;
                         c.ForeColor = SystemColors.ControlText;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
-                        // Preserva o fundo (verde/amarelo/vermelho) dos badges/status no clássico; só ajusta o texto
-                        lb.ForeColor = SystemColors.ControlText;
+                        // Preserva o fundo (badges/status/cartões); só ajusta a cor do texto
+                        c.ForeColor = SystemColors.ControlText;
                     }
                     else
                     {
@@ -206,7 +223,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = font;
                     }
                     catch { }
@@ -236,10 +253,10 @@ namespace MedControl.UI
                         btn.BackColor = accent;
                         btn.ForeColor = Color.White;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
                         // preserva cor de fundo do badge/status, mas ajusta a cor do texto para o tema claro
-                        lb.ForeColor = Color.Black;
+                        c.ForeColor = Color.Black;
                     }
                     else
                     {
@@ -268,7 +285,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = font;
                     }
                     catch { }
@@ -296,10 +313,10 @@ namespace MedControl.UI
                     {
                         c.BackColor = bg; c.ForeColor = fg;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
                         // preserva badges, texto branco no alto contraste
-                        lb.ForeColor = fg;
+                        c.ForeColor = fg;
                     }
                     else
                     {
@@ -328,7 +345,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = font;
                     }
                     catch { }
@@ -355,10 +372,10 @@ namespace MedControl.UI
                     {
                         c.BackColor = bg; c.ForeColor = fg;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
                         // preserva badges, texto em verde CRT sobre fundo existente
-                        lb.ForeColor = fg;
+                        c.ForeColor = fg;
                     }
                     else
                     {
@@ -378,12 +395,12 @@ namespace MedControl.UI
             void Walk(Control c)
             {
                 // Reset genérico de cores para um baseline neutro
-                if (c is Label lbl && (lbl.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (IsKeepBackcolorControl(c))
                 {
-                    // preserva a cor de fundo (badge/status), mas normaliza a cor do texto
-                    lbl.ForeColor = SystemColors.ControlText;
+                    // preserva a cor de fundo (badge/status/cartões), mas normaliza a cor do texto
+                    c.ForeColor = SystemColors.ControlText;
                 }
-                else if (c is Button btn && (btn.Tag as string) == "accent")
+                else if (IsAccentButton(c))
                 {
                     // preserva o estilo/acento do botão
                 }
@@ -494,7 +511,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton)
                         {
                             if (c is MenuStrip)
@@ -558,7 +575,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = font;
                     }
                     catch { }
@@ -587,10 +604,10 @@ namespace MedControl.UI
                         btn.BackColor = Color.White;
                         btn.ForeColor = text;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
                         // preserva badges, texto escuro
-                        lb.ForeColor = text;
+                        c.ForeColor = text;
                     }
                     else
                     {
@@ -622,7 +639,7 @@ namespace MedControl.UI
                     {
                         var tag = c.Tag as string;
                         bool keepFont = tag != null && tag.IndexOf("keep-font", StringComparison.OrdinalIgnoreCase) >= 0;
-                        bool isAccentButton = c is Button b1 && (b1.Tag as string) == "accent";
+                        bool isAccentButton = IsAccentButton(c);
                         if (!keepFont && !isAccentButton) c.Font = font;
                     }
                     catch { }
@@ -651,10 +668,10 @@ namespace MedControl.UI
                         btn.BackColor = Color.FromArgb(45, 45, 48);
                         btn.ForeColor = text;
                     }
-                    else if (c is Label lb && (lb.Tag as string)?.IndexOf("keep-backcolor", StringComparison.OrdinalIgnoreCase) >= 0)
+                    else if (IsKeepBackcolorControl(c))
                     {
                         // preserva badges, texto claro
-                        lb.ForeColor = text;
+                        c.ForeColor = text;
                     }
                     else
                     {

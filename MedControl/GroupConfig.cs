@@ -43,5 +43,11 @@ namespace MedControl
             }
             set => Database.SetConfig("group_port", value.ToString());
         }
+
+        public static string GroupPassword
+        {
+            get => Database.GetConfig("sync_group_password") ?? string.Empty;
+            set => Database.SetConfig("sync_group_password", value ?? string.Empty);
+        }
     }
 }
