@@ -814,36 +814,62 @@ namespace MedControl.Views
         // ===== Excel Export/Import (Histórico de entregas / Relatório) =====
         private void ExportarExcel()
         {
-            // Exporta histórico (tabela Relatorio) filtrando opcionalmente por chave
-            var dados = Database.GetRelatorios();
+            // Exporta o que está visível na grade (Reservas em andamento/ativas),
+            // respeitando o filtro por chave quando houver.
+            var reservas = _bs.Cast<object>()
+                .OfType<Reserva>()
+                .AsEnumerable();
+
             if (!string.IsNullOrWhiteSpace(_chaveFiltro))
-                dados = dados.Where(r => string.Equals(r.Chave, _chaveFiltro, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (dados.Count == 0)
+                reservas = reservas.Where(r => string.Equals(r.Chave ?? string.Empty, _chaveFiltro, StringComparison.OrdinalIgnoreCase));
+
+            var lista = reservas.ToList();
+            if (lista.Count == 0)
             {
                 MessageBox.Show("Não há registros para exportar.");
                 return;
             }
-            using var sfd = new SaveFileDialog { Filter = "Excel (*.xlsx)|*.xlsx", FileName = string.IsNullOrWhiteSpace(_chaveFiltro) ? "Relacao_Chaves.xlsx" : $"Relacao_{_chaveFiltro}.xlsx" };
+
+            using var sfd = new SaveFileDialog
+            {
+                Filter = "Excel (*.xlsx)|*.xlsx",
+                FileName = string.IsNullOrWhiteSpace(_chaveFiltro) ? "Relacao_Reservas.xlsx" : $"Relacao_{_chaveFiltro}.xlsx"
+            };
             if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
             try
             {
                 using var wb = new XLWorkbook();
-                var ws = wb.AddWorksheet("Relação de Chaves");
-                string[] headers = { "Chave", "Aluno", "Professor", "DataHora", "DataDevolucao", "TempoComChave", "Termo" };
-                for (int i = 0; i < headers.Length; i++) ws.Cell(1, i + 1).Value = headers[i];
-                int row = 2;
-                foreach (var r in dados)
+                var ws = wb.AddWorksheet("Relação");
+
+                // Cabeçalhos amigáveis e alinhados com a visualização
+                string[] headers = { "Chave", "Aluno", "Professor", "Data e Hora", "Status", "Item Atribuído", "Termo" };
+                for (int i = 0; i < headers.Length; i++)
                 {
-                    ws.Cell(row, 1).Value = r.Chave;
-                    ws.Cell(row, 2).Value = r.Aluno ?? "";
-                    ws.Cell(row, 3).Value = r.Professor ?? "";
-                    ws.Cell(row, 4).Value = r.DataHora;
-                    // Evita aviso de possível nulo: se não houver devolução, deixa célula vazia
-                    ws.Cell(row, 5).Value = r.DataDevolucao.HasValue ? r.DataDevolucao.Value : "";
-                    ws.Cell(row, 6).Value = r.TempoComChave ?? "";
-                    ws.Cell(row, 7).Value = r.Termo ?? "";
+                    var cell = ws.Cell(1, i + 1);
+                    cell.Value = headers[i];
+                    cell.Style.Font.Bold = true;
+                    cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+                }
+
+                int row = 2;
+                foreach (var r in lista.OrderBy(r => r.DataHora))
+                {
+                    ws.Cell(row, 1).Value = r.Chave ?? string.Empty;
+                    ws.Cell(row, 2).Value = r.Aluno ?? string.Empty;
+                    ws.Cell(row, 3).Value = r.Professor ?? string.Empty;
+                    var cData = ws.Cell(row, 4);
+                    cData.Value = r.DataHora;
+                    cData.Style.DateFormat.Format = "dd/MM/yyyy HH:mm:ss";
+                    ws.Cell(row, 5).Value = r.EmUso ? "Em Uso" : (r.Devolvido ? "Devolvido" : "Reservado");
+                    ws.Cell(row, 6).Value = string.IsNullOrWhiteSpace(r.Termo) ? "Não" : "Sim";
+                    ws.Cell(row, 7).Value = r.Termo ?? string.Empty;
                     row++;
                 }
+
+                // Auto-ajuste de largura das colunas
+                ws.Columns().AdjustToContents();
+
                 wb.SaveAs(sfd.FileName);
                 MessageBox.Show("Exportado com sucesso.");
             }

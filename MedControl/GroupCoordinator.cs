@@ -182,6 +182,33 @@ namespace MedControl
                 if (desired == GroupMode.Host)
                 {
                     try { GroupHost.Start(); } catch { }
+                    // Warm-merge: ao virar Host, tenta mesclar dados de um Host recente visto na rede
+                    try
+                    {
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                var peers = SyncService.GetPeers();
+                                var otherHost = peers
+                                    .Where(p => string.Equals(p.Role, "host", StringComparison.OrdinalIgnoreCase) &&
+                                                !string.Equals(p.Node, SyncService.LocalNodeName(), StringComparison.OrdinalIgnoreCase) &&
+                                                p.HostPort > 0)
+                                    .OrderByDescending(p => p.LastSeen)
+                                    .FirstOrDefault();
+                                if (otherHost != null && (DateTime.UtcNow - otherHost.LastSeen) < TimeSpan.FromSeconds(30))
+                                {
+                                    var reservas = GroupClient.PullReservasFrom(otherHost.Address, otherHost.HostPort, connectTimeoutMs: 800, ioTimeoutMs: 1500);
+                                    if (reservas != null && reservas.Count > 0)
+                                    {
+                                        Database.ReplaceAllReservasLocalSilent(reservas);
+                                    }
+                                }
+                            }
+                            catch { }
+                        });
+                    }
+                    catch { }
                 }
                 else
                 {

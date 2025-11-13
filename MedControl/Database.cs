@@ -156,6 +156,11 @@ namespace MedControl
                     cmd.CommandText = sql;
                     cmd.ExecuteNonQuery();
                 }
+                // Migrações: adiciona colunas de controle se não existirem
+                try { cmd.CommandText = "ALTER TABLE reservas ADD COLUMN last_modified VARCHAR(27)"; cmd.ExecuteNonQuery(); } catch { }
+                try { cmd.CommandText = "ALTER TABLE reservas ADD COLUMN deleted TINYINT(1) DEFAULT 0"; cmd.ExecuteNonQuery(); } catch { }
+                // Índice/constraint para upsert por chave natural
+                try { cmd.CommandText = "ALTER TABLE reservas ADD UNIQUE KEY uq_reservas (chave, aluno, professor, data_hora)"; cmd.ExecuteNonQuery(); } catch { }
             }
             else
             {
@@ -209,6 +214,11 @@ namespace MedControl
                     cmd.CommandText = sql;
                     cmd.ExecuteNonQuery();
                 }
+                // Migrações: adiciona colunas de controle se não existirem (SQLite não suporta IF NOT EXISTS aqui)
+                try { cmd.CommandText = "ALTER TABLE reservas ADD COLUMN last_modified TEXT"; cmd.ExecuteNonQuery(); } catch { }
+                try { cmd.CommandText = "ALTER TABLE reservas ADD COLUMN deleted INTEGER DEFAULT 0"; cmd.ExecuteNonQuery(); } catch { }
+                // Índice único para upsert por chave natural (SQLite)
+                try { cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS uq_reservas ON reservas (chave, aluno, professor, data_hora)"; cmd.ExecuteNonQuery(); } catch { }
             }
         }
 
@@ -380,8 +390,8 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao)
-                                VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd)";
+            cmd.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao, last_modified, deleted)
+                                VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd,@lm,@del)";
             AddParam(cmd, "@ch", r.Chave);
             AddParam(cmd, "@al", r.Aluno ?? "");
             AddParam(cmd, "@pr", r.Professor ?? "");
@@ -390,6 +400,9 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             AddParam(cmd, "@te", r.Termo ?? "");
             AddParam(cmd, "@dev", r.Devolvido ? 1 : 0);
             AddParam(cmd, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+            var lmIns = r.LastModifiedUtc == DateTime.MinValue ? DateTime.UtcNow : r.LastModifiedUtc;
+            AddParam(cmd, "@lm", lmIns.ToString("o"));
+            AddParam(cmd, "@del", r.Deleted ? 1 : 0);
             cmd.ExecuteNonQuery();
             TouchChange("insert_reserva");
         }
@@ -422,12 +435,14 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"UPDATE reservas SET em_uso=@em, termo=@te, devolvido=@dev, data_devolucao=@dd
+            cmd.CommandText = @"UPDATE reservas SET em_uso=@em, termo=@te, devolvido=@dev, data_devolucao=@dd, last_modified=@lm
                                 WHERE chave=@ch AND aluno=@al AND professor=@pr AND data_hora=@dt";
             AddParam(cmd, "@em", r.EmUso ? 1 : 0);
             AddParam(cmd, "@te", r.Termo ?? "");
             AddParam(cmd, "@dev", r.Devolvido ? 1 : 0);
             AddParam(cmd, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+            var lmUp = r.LastModifiedUtc == DateTime.MinValue ? DateTime.UtcNow : r.LastModifiedUtc;
+            AddParam(cmd, "@lm", lmUp.ToString("o"));
             AddParam(cmd, "@ch", r.Chave);
             AddParam(cmd, "@al", r.Aluno ?? "");
             AddParam(cmd, "@pr", r.Professor ?? "");
@@ -464,7 +479,8 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"DELETE FROM reservas WHERE chave=@ch AND aluno=@al AND professor=@pr AND data_hora=@dt";
+            cmd.CommandText = @"UPDATE reservas SET deleted=1, last_modified=@lm WHERE chave=@ch AND aluno=@al AND professor=@pr AND data_hora=@dt";
+            AddParam(cmd, "@lm", DateTime.UtcNow.ToString("o"));
             AddParam(cmd, "@ch", chave);
             AddParam(cmd, "@al", aluno ?? "");
             AddParam(cmd, "@pr", professor ?? "");
@@ -483,7 +499,7 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
             using var conn = CreateConnection();
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao FROM reservas";
+            cmd.CommandText = "SELECT chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao, last_modified, deleted FROM reservas";
             using var rdr = cmd.ExecuteReader();
             while (rdr.Read())
             {
@@ -494,6 +510,10 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                     dd = parsed;
                 }
                 DateTime.TryParse(rdr.GetString(3), out var data);
+                DateTime lm = DateTime.MinValue;
+                try { if (!rdr.IsDBNull(8)) DateTime.TryParse(rdr.GetString(8), out lm); } catch { }
+                int deleted = 0;
+                try { if (!rdr.IsDBNull(9)) deleted = rdr.GetInt32(9); } catch { }
                 list.Add(new Reserva
                 {
                     Chave = rdr.GetString(0),
@@ -503,8 +523,51 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                     EmUso = !rdr.IsDBNull(4) && rdr.GetInt32(4) == 1,
                     Termo = rdr.IsDBNull(5) ? string.Empty : rdr.GetString(5),
                     Devolvido = !rdr.IsDBNull(6) && rdr.GetInt32(6) == 1,
-                    DataDevolucao = dd
+                    DataDevolucao = dd,
+                    LastModifiedUtc = lm,
+                    Deleted = deleted == 1
                 });
+            }
+            // Para consumo do UI, retornamos apenas não deletados
+            return list.Where(x => !x.Deleted).ToList();
+        }
+
+        // Para sincronização: permite incluir registros deletados (tombstones)
+        public static List<Reserva> GetReservasForSync(bool includeDeleted = true)
+        {
+            var list = new List<Reserva>();
+            using var conn = CreateConnection();
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao, last_modified, deleted FROM reservas";
+            using var rdr = cmd.ExecuteReader();
+            while (rdr.Read())
+            {
+                DateTime? dd = null;
+                if (!rdr.IsDBNull(7))
+                {
+                    DateTime.TryParse(rdr.GetString(7), out var parsed);
+                    dd = parsed;
+                }
+                DateTime.TryParse(rdr.GetString(3), out var data);
+                DateTime lm = DateTime.MinValue;
+                try { if (!rdr.IsDBNull(8)) DateTime.TryParse(rdr.GetString(8), out lm); } catch { }
+                int deleted = 0;
+                try { if (!rdr.IsDBNull(9)) deleted = rdr.GetInt32(9); } catch { }
+                var item = new Reserva
+                {
+                    Chave = rdr.GetString(0),
+                    Aluno = rdr.IsDBNull(1) ? string.Empty : rdr.GetString(1),
+                    Professor = rdr.IsDBNull(2) ? string.Empty : rdr.GetString(2),
+                    DataHora = data,
+                    EmUso = !rdr.IsDBNull(4) && rdr.GetInt32(4) == 1,
+                    Termo = rdr.IsDBNull(5) ? string.Empty : rdr.GetString(5),
+                    Devolvido = !rdr.IsDBNull(6) && rdr.GetInt32(6) == 1,
+                    DataDevolucao = dd,
+                    LastModifiedUtc = lm,
+                    Deleted = deleted == 1
+                };
+                if (includeDeleted || !item.Deleted) list.Add(item);
             }
             return list;
         }
@@ -569,65 +632,72 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
         // Substitui completamente a tabela de reservas (para sincronização inicial)
         public static void ReplaceAllReservas(System.Collections.Generic.List<Reserva> reservas)
         {
-            using var conn = CreateConnection();
-            conn.Open();
-            using var tx = conn.BeginTransaction();
-            using (var del = conn.CreateCommand())
-            {
-                del.Transaction = tx;
-                del.CommandText = "DELETE FROM reservas";
-                del.ExecuteNonQuery();
-            }
-            foreach (var r in reservas)
-            {
-                using var ins = conn.CreateCommand();
-                ins.Transaction = tx;
-                ins.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao)
-                                    VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd)";
-                AddParam(ins, "@ch", r.Chave);
-                AddParam(ins, "@al", r.Aluno ?? "");
-                AddParam(ins, "@pr", r.Professor ?? "");
-                AddParam(ins, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
-                AddParam(ins, "@em", r.EmUso ? 1 : 0);
-                AddParam(ins, "@te", r.Termo ?? "");
-                AddParam(ins, "@dev", r.Devolvido ? 1 : 0);
-                AddParam(ins, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
-                ins.ExecuteNonQuery();
-            }
-            tx.Commit();
-            TouchChange("replace_all_reservas");
+            MergeReservasInternal(reservas, silent: false);
+            TouchChange("merge_reservas");
         }
 
         // Versão silenciosa: substitui reservas sem disparar TouchChange/NotifyChange (evita loops em CHANGE)
         public static void ReplaceAllReservasLocalSilent(System.Collections.Generic.List<Reserva> reservas)
         {
+            MergeReservasInternal(reservas, silent: true);
+        }
+
+        // Merge baseado em LWW por (chave, aluno, professor, data_hora)
+        private static void MergeReservasInternal(System.Collections.Generic.List<Reserva> incoming, bool silent)
+        {
             using var conn = CreateConnection();
             conn.Open();
             using var tx = conn.BeginTransaction();
-            using (var del = conn.CreateCommand())
+
+            foreach (var r in incoming)
             {
-                del.Transaction = tx;
-                del.CommandText = "DELETE FROM reservas";
-                del.ExecuteNonQuery();
-            }
-            foreach (var r in reservas)
-            {
-                using var ins = conn.CreateCommand();
-                ins.Transaction = tx;
-                ins.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao)
-                                    VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd)";
-                AddParam(ins, "@ch", r.Chave);
-                AddParam(ins, "@al", r.Aluno ?? "");
-                AddParam(ins, "@pr", r.Professor ?? "");
-                AddParam(ins, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
-                AddParam(ins, "@em", r.EmUso ? 1 : 0);
-                AddParam(ins, "@te", r.Termo ?? "");
-                AddParam(ins, "@dev", r.Devolvido ? 1 : 0);
-                AddParam(ins, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
-                ins.ExecuteNonQuery();
+                using var sel = conn.CreateCommand();
+                sel.Transaction = tx;
+                sel.CommandText = @"SELECT last_modified FROM reservas WHERE chave=@ch AND aluno=@al AND professor=@pr AND data_hora=@dt";
+                AddParam(sel, "@ch", r.Chave);
+                AddParam(sel, "@al", r.Aluno ?? "");
+                AddParam(sel, "@pr", r.Professor ?? "");
+                AddParam(sel, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
+                var curLmObj = sel.ExecuteScalar();
+                DateTime curLm = DateTime.MinValue;
+                if (curLmObj != null && curLmObj != DBNull.Value)
+                {
+                    DateTime.TryParse(Convert.ToString(curLmObj), out curLm);
+                }
+                var inLm = r.LastModifiedUtc == DateTime.MinValue ? DateTime.UtcNow : r.LastModifiedUtc;
+                bool shouldUpsert = curLm == DateTime.MinValue || inLm >= curLm;
+
+                if (shouldUpsert)
+                {
+                    using var up = conn.CreateCommand();
+                    up.Transaction = tx;
+                    if (Provider == "mysql")
+                    {
+                        up.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao, last_modified, deleted)
+VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd,@lm,@del)
+ON DUPLICATE KEY UPDATE em_uso=VALUES(em_uso), termo=VALUES(termo), devolvido=VALUES(devolvido), data_devolucao=VALUES(data_devolucao), last_modified=VALUES(last_modified), deleted=VALUES(deleted)";
+                    }
+                    else
+                    {
+                        up.CommandText = @"INSERT INTO reservas (chave, aluno, professor, data_hora, em_uso, termo, devolvido, data_devolucao, last_modified, deleted)
+VALUES (@ch,@al,@pr,@dt,@em,@te,@dev,@dd,@lm,@del)
+ON CONFLICT(chave, aluno, professor, data_hora) DO UPDATE SET em_uso=excluded.em_uso, termo=excluded.termo, devolvido=excluded.devolvido, data_devolucao=excluded.data_devolucao, last_modified=excluded.last_modified, deleted=excluded.deleted";
+                    }
+                    AddParam(up, "@ch", r.Chave);
+                    AddParam(up, "@al", r.Aluno ?? "");
+                    AddParam(up, "@pr", r.Professor ?? "");
+                    AddParam(up, "@dt", r.DataHora.ToString("dd/MM/yyyy HH:mm:ss"));
+                    AddParam(up, "@em", r.EmUso ? 1 : 0);
+                    AddParam(up, "@te", r.Termo ?? "");
+                    AddParam(up, "@dev", r.Devolvido ? 1 : 0);
+                    AddParam(up, "@dd", r.DataDevolucao.HasValue ? r.DataDevolucao.Value.ToString("dd/MM/yyyy HH:mm:ss") : (object?)DBNull.Value);
+                    AddParam(up, "@lm", inLm.ToString("o"));
+                    AddParam(up, "@del", r.Deleted ? 1 : 0);
+                    up.ExecuteNonQuery();
+                }
             }
             tx.Commit();
-            // sem TouchChange
+            if (!silent) TouchChange("merge_reservas_internal");
         }
 
         // Substitui completamente a tabela de relatorio (para sincronização inicial)

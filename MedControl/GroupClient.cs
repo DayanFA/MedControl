@@ -192,6 +192,69 @@ namespace MedControl
             return r.ok && r.data != null ? JsonSerializer.Deserialize<System.Collections.Generic.List<Reserva>>(r.data) ?? new() : new();
         }
 
+        // Faz pull diretamente de um endereço/porta específicos, ignorando heurísticas de host atual.
+        public static System.Collections.Generic.List<Reserva> PullReservasFrom(string hostOnly, int port, int connectTimeoutMs = 400, int ioTimeoutMs = 800)
+        {
+            try
+            {
+                var req = new { type = "pull", entity = "reservas" };
+                var r = SendTo(hostOnly, port, req, connectTimeoutMs, ioTimeoutMs, attempts: 2);
+                return r.ok && r.data != null ? JsonSerializer.Deserialize<System.Collections.Generic.List<Reserva>>(r.data) ?? new() : new();
+            }
+            catch { return new System.Collections.Generic.List<Reserva>(); }
+        }
+
+        // Versão interna de Send que permite especificar host/porta de destino diretamente
+        private static (bool ok, string? error, string? data) SendTo(string hostOnly, int port, object req, int connectTimeoutMs, int ioTimeoutMs, int attempts = 1)
+        {
+            try
+            {
+                Exception? lastEx = null;
+                for (int i = 0; i < Math.Max(1, attempts); i++)
+                {
+                    var ct = i == 0 ? connectTimeoutMs : Math.Max(600, connectTimeoutMs * 2);
+                    var io = i == 0 ? ioTimeoutMs : Math.Max(ioTimeoutMs, (int)(ct * 1.5));
+                    try
+                    {
+                        using var c = ConnectWithTimeout(hostOnly, port, ct);
+                        c.NoDelay = true;
+                        c.ReceiveTimeout = io; c.SendTimeout = io;
+                        using var ns = c.GetStream();
+                        using var writer = new StreamWriter(ns, new UTF8Encoding(false)) { AutoFlush = true };
+                        using var reader = new StreamReader(ns, Encoding.UTF8, false);
+                        var json = MergeWithAuth(req);
+                        writer.WriteLine(json);
+                        var line = reader.ReadLine();
+                        if (string.IsNullOrWhiteSpace(line)) { lastEx = new IOException("empty response"); throw lastEx; }
+                        using var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        var ok = root.GetProperty("ok").GetBoolean();
+                        string? err = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+                        string? data = root.TryGetProperty("data", out var d) ? d.GetRawText() : null;
+                        if (ok) MarkSuccess(); else MarkFail();
+                        return (ok, err, data);
+                    }
+                    catch (Exception ex)
+                    {
+                        lastEx = ex;
+                        if (i < attempts - 1)
+                        {
+                            try { System.Threading.Thread.Sleep(100); } catch { }
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                MarkFail();
+                throw lastEx ?? new IOException("Falha de comunicação");
+            }
+            catch
+            {
+                MarkFail();
+                throw;
+            }
+        }
+
         public static System.Data.DataTable PullAlunos(int connectTimeoutMs = 200, int ioTimeoutMs = 800)
         {
             var r = Send(new { type = "pull", entity = "alunos" }, connectTimeoutMs, ioTimeoutMs, attempts: 3);

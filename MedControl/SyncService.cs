@@ -21,6 +21,8 @@ namespace MedControl
     private static System.Threading.Timer? _beaconTimer;
         private static volatile bool _running;
     private static readonly ConcurrentDictionary<string, PeerInfo> _peers = new();
+    private static readonly ConcurrentDictionary<string, DateTime> _groupsSeen = new();
+    private static readonly ConcurrentDictionary<string, GroupAdvert> _groupAdverts = new();
     private static readonly ConcurrentDictionary<string, DateTime> _seenChatIds = new();
     private static DateTime _lastPrune = DateTime.UtcNow;
     private static DateTime _lastBgPullUtc = DateTime.MinValue;
@@ -37,6 +39,17 @@ namespace MedControl
             public string HostHint { get; set; } = string.Empty;
             public string Role { get; set; } = string.Empty; // "host" | "client" | "solo" | ""
             public int HostPort { get; set; } = 0; // porta TCP do host, se Role==host
+            public string Group { get; set; } = "default"; // grupo do beacon
+            public DateTime LastSeen { get; set; }
+        }
+
+        public class GroupAdvert
+        {
+            public string Group { get; set; } = "default";
+            public string Node { get; set; } = "?";
+            public string Address { get; set; } = "?";
+            public int HostPort { get; set; } = 0;
+            public string Role { get; set; } = string.Empty; // host|client|solo
             public DateTime LastSeen { get; set; }
         }
 
@@ -61,6 +74,39 @@ namespace MedControl
         public static PeerInfo[] GetPeers()
         {
             try { return _peers.Values.OrderByDescending(p => p.LastSeen).ToArray(); } catch { return Array.Empty<PeerInfo>(); }
+        }
+
+        // Lista de grupos vistos recentemente via beacons (últimos 90s)
+        public static string[] GetSeenGroups()
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var cut = now.AddSeconds(-90);
+                var list = _groupsSeen.Where(kv => kv.Value >= cut).Select(kv => kv.Key).Distinct().ToList();
+                // Garante inclusão do grupo atual
+                var cur = Group;
+                if (!list.Contains(cur)) list.Add(cur);
+                return list.OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToArray();
+            }
+            catch { return new[] { Group }; }
+        }
+
+        // Retorna anúncios (recém vistos) por grupo, priorizando quem é host e com porta válida
+        public static GroupAdvert[] GetGroupAdverts()
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var cut = now.AddSeconds(-90);
+                return _groupAdverts
+                    .Select(kv => kv.Value)
+                    .Where(a => a.LastSeen >= cut)
+                    .OrderByDescending(a => string.Equals(a.Role, "host", StringComparison.OrdinalIgnoreCase))
+                    .ThenByDescending(a => a.LastSeen)
+                    .ToArray();
+            }
+            catch { return Array.Empty<GroupAdvert>(); }
         }
 
         // Melhor estimativa de host atual baseado nos beacons recentes
@@ -202,7 +248,13 @@ namespace MedControl
                     if (parts.Length < 3) continue;
                     var type = parts[1];
                     var grp = parts[2];
-                    if (!string.Equals(grp, Group, StringComparison.Ordinal)) continue; // outro grupo
+                    // Sempre registra o grupo visto, mesmo que não seja o atual
+                    try { _groupsSeen[grp] = DateTime.UtcNow; } catch { }
+                    if (!string.Equals(grp, Group, StringComparison.Ordinal))
+                    {
+                        // Ignora processamento detalhado (peers/chat) para outros grupos
+                        continue;
+                    }
 
                     switch (type)
                     {
@@ -236,6 +288,33 @@ namespace MedControl
                                 int hostPort = 0;
                                 if (parts.Length > 6) int.TryParse(parts[6], out hostPort);
                                 var addr = ep.Address.ToString();
+                                // Registra anúncio por grupo para listagem no UI (mesmo quando group != atual acima)
+                                try
+                                {
+                                    _groupAdverts.AddOrUpdate(grp, _ => new GroupAdvert
+                                    {
+                                        Group = grp,
+                                        Node = node!,
+                                        Address = addr,
+                                        HostPort = hostPort,
+                                        Role = role,
+                                        LastSeen = DateTime.UtcNow
+                                    }, (_, existing) =>
+                                    {
+                                        // preferir host; caso contrário, apenas atualiza se for mais recente
+                                        bool prefer = string.Equals(role, "host", StringComparison.OrdinalIgnoreCase) && !string.Equals(existing.Role, "host", StringComparison.OrdinalIgnoreCase);
+                                        if (prefer || existing.LastSeen < DateTime.UtcNow)
+                                        {
+                                            existing.Node = node!;
+                                            existing.Address = addr;
+                                            existing.HostPort = hostPort;
+                                            existing.Role = role;
+                                            existing.LastSeen = DateTime.UtcNow;
+                                        }
+                                        return existing;
+                                    });
+                                }
+                                catch { }
                                 var key = (node ?? "?").Trim().ToLowerInvariant();
                                 _peers.AddOrUpdate(key, _ => new PeerInfo
                                 {
@@ -244,6 +323,7 @@ namespace MedControl
                                     HostHint = hint,
                                     Role = role,
                                     HostPort = hostPort,
+                                    Group = grp,
                                     LastSeen = DateTime.UtcNow
                                 }, (_, existing) =>
                                 {
@@ -253,6 +333,7 @@ namespace MedControl
                                     existing.HostHint = hint;
                                     existing.Role = role;
                                     existing.HostPort = hostPort;
+                                    existing.Group = grp;
                                     existing.LastSeen = DateTime.UtcNow;
                                     return existing;
                                 });

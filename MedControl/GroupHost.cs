@@ -210,7 +210,7 @@ namespace MedControl
                         writer.WriteLine(JsonSerializer.Serialize(new { ok = true, data = rl }));
                         break;
                     case "reservas":
-                        var rv = Database.GetReservas();
+                        var rv = Database.GetReservasForSync(includeDeleted: true);
                         writer.WriteLine(JsonSerializer.Serialize(new { ok = true, data = rv }));
                         break;
                     case "alunos":

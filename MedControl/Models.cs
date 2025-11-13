@@ -19,6 +19,9 @@ namespace MedControl
         public string? Termo { get; set; }
         public bool Devolvido { get; set; }
         public DateTime? DataDevolucao { get; set; }
+        // Controle de sincronização
+        public DateTime LastModifiedUtc { get; set; } = DateTime.MinValue;
+        public bool Deleted { get; set; } = false;
     }
 
     public class Relatorio

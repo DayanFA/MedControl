@@ -12,6 +12,7 @@ namespace MedControl.Views
         // Config UI
         private ComboBox _groupMode;
         private TextBox _groupName;
+        private ComboBox _groupSelect; // lista de grupos detectados
         private TextBox _groupHost;
         private TextBox _groupPort;
         private TextBox _groupPassword;
@@ -34,6 +35,8 @@ namespace MedControl.Views
     private Label _cfgLblHost;
     private Label _cfgLblPort;
     private Label _cfgLblPwd;
+    private Label _cfgLblGroupName;
+    private Label _cfgLblGroupSelect;
         private System.Windows.Forms.Timer _uiTimer;
         private System.Windows.Forms.Timer? _statusTimer;
         private Panel _loadingPanel;
@@ -101,6 +104,7 @@ namespace MedControl.Views
             _groupHost = new TextBox { Dock = DockStyle.Fill };
             _groupPort = new TextBox { Dock = DockStyle.Fill };
             _groupPassword = new TextBox { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
+            _groupSelect = new ComboBox { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
             _testConn = new Button { Text = "Testar Conexão", AutoSize = true, Visible = false, Enabled = false };
             _saveBtn = new Button { Text = "Salvar e Conectar", AutoSize = true };
             _connectBtn = new Button { Text = "Conectar", AutoSize = true, Visible = false, Enabled = false };
@@ -110,33 +114,39 @@ namespace MedControl.Views
             cfg.Controls.Add(_groupMode, 1, 0);
             cfg.Controls.Add(new Label { Text = " " }, 2, 0);
 
-            cfg.Controls.Add(Mk("Nome do Grupo:"), 0, 1);
+            _cfgLblGroupName = Mk("Nome do Grupo:");
+            cfg.Controls.Add(_cfgLblGroupName, 0, 1);
             cfg.Controls.Add(_groupName, 1, 1);
             cfg.Controls.Add(new Label { Text = "(ex.: lab1)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 1);
 
+            _cfgLblGroupSelect = Mk("Grupos próximos:");
+            cfg.Controls.Add(_cfgLblGroupSelect, 0, 2);
+            cfg.Controls.Add(_groupSelect, 1, 2);
+            cfg.Controls.Add(new Label { Text = "(auto)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 2);
+
             _cfgLblHost = Mk("Host (modo Host):");
-            cfg.Controls.Add(_cfgLblHost, 0, 2);
-            cfg.Controls.Add(_groupHost, 1, 2);
-            cfg.Controls.Add(new Label { Text = " ", AutoSize = true }, 2, 2); // espaço: botão de teste removido
+            cfg.Controls.Add(_cfgLblHost, 0, 3);
+            cfg.Controls.Add(_groupHost, 1, 3);
+            cfg.Controls.Add(new Label { Text = " ", AutoSize = true }, 2, 3); // espaço: botão de teste removido
 
             _cfgLblPort = Mk("Porta do Host:");
-            cfg.Controls.Add(_cfgLblPort, 0, 3);
-            cfg.Controls.Add(_groupPort, 1, 3);
-            cfg.Controls.Add(new Label { Text = "(padrão 49383)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 3);
+            cfg.Controls.Add(_cfgLblPort, 0, 4);
+            cfg.Controls.Add(_groupPort, 1, 4);
+            cfg.Controls.Add(new Label { Text = "(padrão 49383)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
 
             _cfgLblPwd = Mk("Senha do Grupo:");
-            cfg.Controls.Add(_cfgLblPwd, 0, 4);
-            cfg.Controls.Add(_groupPassword, 1, 4);
-            cfg.Controls.Add(new Label { Text = "(opcional)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 4);
+            cfg.Controls.Add(_cfgLblPwd, 0, 5);
+            cfg.Controls.Add(_groupPassword, 1, 5);
+            cfg.Controls.Add(new Label { Text = "(opcional)", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(6,8,3,8) }, 2, 5);
 
             // Removido campo de apelido do dispositivo a pedido do usuário
 
             // Botão de criar grupo/ser Host agora
-            cfg.Controls.Add(_createGroupBtn, 2, 5);
+            cfg.Controls.Add(_createGroupBtn, 2, 6);
 
-            cfg.Controls.Add(new Label { Text = " " }, 0, 6);
-            cfg.Controls.Add(new Label { Text = " " }, 1, 6); // espaço onde ficava Conectar
-            cfg.Controls.Add(_saveBtn, 2, 6);
+            cfg.Controls.Add(new Label { Text = " " }, 0, 7);
+            cfg.Controls.Add(new Label { Text = " " }, 1, 7); // espaço onde ficava Conectar
+            cfg.Controls.Add(_saveBtn, 2, 7);
 
             // Peers list
             _peersList = new ListView
@@ -270,6 +280,7 @@ namespace MedControl.Views
             _groupMode.SelectedIndexChanged += (_, __) => { ToggleGroupUi(); UpdateStatusTimerMode(); };
             _saveBtn.Click += (_, __) => DoSave();
             _createGroupBtn.Click += (_, __) => DoCreateGroup();
+            _groupSelect.DropDown += (_, __) => RefreshGroupsList();
             
             void DoSave()
             {
@@ -277,7 +288,25 @@ namespace MedControl.Views
                 {
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
                     // Atualiza config base
-                    GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                    if (m == GroupMode.Client)
+                    {
+                        var sel = _groupSelect.SelectedItem as GroupItem;
+                        if (sel != null)
+                        {
+                            GroupConfig.GroupName = string.IsNullOrWhiteSpace(sel.Group) ? "default" : sel.Group.Trim();
+                            if (!string.IsNullOrWhiteSpace(sel.Address)) GroupConfig.HostAddress = sel.Address;
+                            if (sel.Port > 0) GroupConfig.HostPort = sel.Port;
+                        }
+                        else
+                        {
+                            // fallback
+                            GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                        }
+                    }
+                    else
+                    {
+                        GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                    }
                     ApplyHostPortFromFields();
                     GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
                     GroupConfig.Mode = m;
@@ -306,6 +335,8 @@ namespace MedControl.Views
                         try
                         {
                             dlg.BeginInvoke(new Action(() => dlg.SetProgress(5, "Preparando...")));
+                            // Após escolher o grupo, força beacon para que possamos descobrir um host do mesmo grupo
+                            try { SyncService.ForceBeacon(); } catch { }
                             // Tenta Hello se endereço informado
                             if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
                             {
@@ -385,6 +416,7 @@ namespace MedControl.Views
                 catch { }
             }
             ToggleGroupUi();
+            RefreshGroupsList();
             UpdateStatusTimerMode();
 
             // Define caminho do histórico de chat (por grupo)
@@ -423,12 +455,16 @@ namespace MedControl.Views
             try
             {
                 var isClient = _groupMode.SelectedIndex == 2;
-                // Em modo Cliente é opcional informar IP/Porta do Host para forçar conexão manual
-                _groupHost.Visible = isClient;
-                _cfgLblHost.Visible = isClient;
-                _groupPort.Visible = true; // Porta é sempre relevante (Host usa para escutar; Cliente para conectar)
-                _cfgLblPort.Visible = true;
-                try { if (isClient) _cfgLblHost.Text = "Host (opcional):"; } catch { }
+                // Em modo Cliente: esconde Nome do Grupo, Host e Porta; mostra lista de grupos
+                _groupHost.Visible = !isClient;
+                _cfgLblHost.Visible = !isClient;
+                _groupPort.Visible = !isClient;
+                _cfgLblPort.Visible = !isClient;
+                _groupName.Visible = !isClient;
+                if (_cfgLblGroupName != null) _cfgLblGroupName.Visible = !isClient;
+                _groupSelect.Visible = isClient;
+                if (_cfgLblGroupSelect != null) _cfgLblGroupSelect.Visible = isClient;
+                try { if (!isClient) _cfgLblHost.Text = "Host (modo Host):"; else _cfgLblHost.Text = "Host (opcional):"; } catch { }
                 // Senha do grupo é relevante em Cliente e Host
                 _groupPassword.Visible = true;
                 _cfgLblPwd.Visible = true;
@@ -436,14 +472,67 @@ namespace MedControl.Views
                 _connectBtn.Enabled = isClient;
                 _createGroupBtn.Enabled = !isClient; // criar grupo faz sentido em Host/Offline
 
-                // No modo Cliente, capturamos o nome do grupo automaticamente; desabilita a edição
+                // No modo Cliente, o nome do grupo vem da lista
                 _groupName.Enabled = !isClient;
-                if (isClient && string.IsNullOrWhiteSpace(_groupName.Text))
-                {
-                    _groupName.Text = "(automático)";
-                }
+                if (isClient) RefreshGroupsList();
             }
             catch { }
+        }
+
+        private void RefreshGroupsList()
+        {
+            try
+            {
+                var adverts = SyncService.GetGroupAdverts();
+                var curGroup = GroupConfig.GroupName ?? "default";
+                var curHost = GroupConfig.HostAddress ?? string.Empty;
+                var curPort = GroupConfig.HostPort;
+
+                var items = adverts.Select(a => new GroupItem
+                {
+                    Group = a.Group,
+                    Address = a.Address,
+                    Port = a.HostPort,
+                    Role = string.IsNullOrWhiteSpace(a.Role) ? "" : a.Role
+                }).ToList();
+                // Garante que pelo menos o grupo atual aparece (mesmo sem anúncios)
+                if (!items.Any())
+                {
+                    items.Add(new GroupItem { Group = curGroup, Address = curHost, Port = curPort, Role = string.Empty });
+                }
+
+                _groupSelect.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        _groupSelect.Items.Clear();
+                        foreach (var it in items) _groupSelect.Items.Add(it);
+                        // Seleciona o matching do host atual, senão o matching de grupo, senão primeiro
+                        GroupItem? sel = null;
+                        sel = items.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Address) && string.Equals(i.Address, curHost, StringComparison.OrdinalIgnoreCase) && i.Port == curPort)
+                              ?? items.FirstOrDefault(i => string.Equals(i.Group, curGroup, StringComparison.OrdinalIgnoreCase))
+                              ?? items.FirstOrDefault();
+                        if (sel != null) _groupSelect.SelectedItem = sel;
+                    }
+                    catch { }
+                }));
+            }
+            catch { }
+        }
+
+        private class GroupItem
+        {
+            public string Group { get; set; } = "default";
+            public string Address { get; set; } = string.Empty;
+            public int Port { get; set; } = 0;
+            public string Role { get; set; } = string.Empty;
+            public override string ToString()
+            {
+                var addr = !string.IsNullOrWhiteSpace(Address) && Port > 0 ? $"{Address}:{Port}" : (Port > 0 ? $"porta {Port}" : "");
+                var role = string.IsNullOrWhiteSpace(Role) ? "" : $" ({Role})";
+                if (!string.IsNullOrWhiteSpace(addr)) return $"{Group} — {addr}{role}";
+                return Group;
+            }
         }
 
         private void DoConnect() => DoConnect(false);
