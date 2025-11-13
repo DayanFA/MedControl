@@ -281,34 +281,34 @@ namespace MedControl.Views
             _saveBtn.Click += (_, __) => DoSave();
             _createGroupBtn.Click += (_, __) => DoCreateGroup();
             _groupSelect.DropDown += (_, __) => RefreshGroupsList();
+            _groupHost.TextChanged += (_, __) => ToggleGroupUi();
+            _groupPassword.TextChanged += (_, __) => ToggleGroupUi();
             
             void DoSave()
             {
                 try
                 {
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
-                    // Atualiza config base
-                    if (m == GroupMode.Client)
+                    // Atualiza config base conforme modo desejado
+                    if (m == GroupMode.Host)
                     {
-                        var sel = _groupSelect.SelectedItem as GroupItem;
-                        if (sel != null)
-                        {
-                            GroupConfig.GroupName = string.IsNullOrWhiteSpace(sel.Group) ? "default" : sel.Group.Trim();
-                            if (!string.IsNullOrWhiteSpace(sel.Address)) GroupConfig.HostAddress = sel.Address;
-                            if (sel.Port > 0) GroupConfig.HostPort = sel.Port;
-                        }
-                        else
-                        {
-                            // fallback
-                            GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
-                        }
+                        GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                        GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
+                    }
+                    else if (m == GroupMode.Client)
+                    {
+                        // Cliente: somente IP (host) e senha; porta padrão
+                        ApplyHostPortFromFields();
+                        GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
+                        // Nome do grupo pode ser descoberto via Hello mais adiante
+                        if (string.IsNullOrWhiteSpace(GroupConfig.GroupName)) GroupConfig.GroupName = "default";
                     }
                     else
                     {
+                        // Offline
                         GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
+                        GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
                     }
-                    ApplyHostPortFromFields();
-                    GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
                     GroupConfig.Mode = m;
 
                     if (m == GroupMode.Host)
@@ -326,7 +326,7 @@ namespace MedControl.Views
                         return;
                     }
 
-                    // Modo Cliente: fazer Hello+Ping+Sync num fluxo único
+                    // Modo Cliente: fazer Hello (descobrir grupo) + Ping + Sync
                     using var dlg = new SyncProgressForm();
                     dlg.StartPosition = FormStartPosition.CenterParent;
                     dlg.Show(this);
@@ -338,15 +338,16 @@ namespace MedControl.Views
                         try
                         {
                             dlg.BeginInvoke(new Action(() => dlg.SetProgress(5, "Preparando...")));
-                            // Após escolher o grupo, força beacon para que possamos descobrir um host do mesmo grupo
+                            // Força beacon (não obrigatório, mas mantém consistência)
                             try { SyncService.ForceBeacon(); } catch { }
-                            // Tenta Hello se endereço informado
+                            // Tenta Hello se endereço informado para descobrir nome do grupo/porta
                             if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
                             {
                                 if (GroupClient.Hello(out var gname, out var hport, out var herr))
                                 {
                                     GroupConfig.GroupName = gname ?? "default";
                                     GroupConfig.HostPort = hport;
+                                    try { BeginInvoke(new Action(() => _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}")); } catch { }
                                 }
                             }
                             dlg.BeginInvoke(new Action(() => dlg.SetProgress(12, "Verificando host...")));
@@ -459,34 +460,35 @@ namespace MedControl.Views
             try
             {
                 var isClient = _groupMode.SelectedIndex == 2;
-                // Em modo Cliente: esconde Nome do Grupo, Host e Porta; mostra lista de grupos
-                _groupHost.Visible = !isClient;
-                _cfgLblHost.Visible = !isClient;
-                _groupPort.Visible = !isClient;
-                _cfgLblPort.Visible = !isClient;
-                _groupName.Visible = !isClient;
-                if (_cfgLblGroupName != null) _cfgLblGroupName.Visible = !isClient;
-                _groupSelect.Visible = isClient;
-                if (_cfgLblGroupSelect != null) _cfgLblGroupSelect.Visible = isClient;
-                try { if (!isClient) _cfgLblHost.Text = "Host (modo Host):"; else _cfgLblHost.Text = "Host (opcional):"; } catch { }
-                // Senha do grupo é relevante em Cliente e Host
+                var isHost = _groupMode.SelectedIndex == 1;
+                // Visibilidade por modo
+                // Host: só Nome do Grupo e Senha
+                _groupName.Visible = isHost;
+                if (_cfgLblGroupName != null) _cfgLblGroupName.Visible = isHost;
+                _groupHost.Visible = isClient;
+                _cfgLblHost.Visible = isClient;
+                _groupPort.Visible = false;
+                _cfgLblPort.Visible = false;
+                _groupSelect.Visible = false;
+                if (_cfgLblGroupSelect != null) _cfgLblGroupSelect.Visible = false;
+                try { if (isClient) _cfgLblHost.Text = "Host/IP do servidor:"; } catch { }
+                // Senha visível em Host e Cliente
                 _groupPassword.Visible = true;
                 _cfgLblPwd.Visible = true;
                 _testConn.Enabled = isClient;
                 _connectBtn.Enabled = isClient;
-                _createGroupBtn.Enabled = !isClient; // criar grupo faz sentido em Host/Offline
+                _createGroupBtn.Enabled = isHost; // criar grupo só faz sentido em Host
 
-                // No modo Cliente, o nome do grupo vem da lista
-                _groupName.Enabled = !isClient;
-                if (isClient) RefreshGroupsList();
-                // Botão Salvar e Conectar só habilitado em Cliente e se há host disponível
+                // Habilitação do botão Salvar
                 if (isClient)
                 {
-                    _saveBtn.Enabled = _groupSelect.Items.Count > 0 && _groupSelect.SelectedIndex >= 0;
+                    var hasHost = !string.IsNullOrWhiteSpace(_groupHost.Text);
+                    var hasPwd = !string.IsNullOrWhiteSpace(_groupPassword.Text);
+                    _saveBtn.Enabled = hasHost && hasPwd;
                 }
                 else
                 {
-                    _saveBtn.Enabled = false; // Em Host usa 'Criar grupo', Offline não precisa salvar para conectar
+                    _saveBtn.Enabled = false;
                 }
             }
             catch { }
@@ -1090,7 +1092,8 @@ namespace MedControl.Views
                         if (string.IsNullOrWhiteSpace(portField)) portField = pAgain.ToString();
                     }
                 }
-                if (int.TryParse(portField, out var p) && p > 0) GroupConfig.HostPort = p;
+                // Porta padrão se não informada ou inválida
+                if (int.TryParse(portField, out var p) && p > 0) GroupConfig.HostPort = p; else GroupConfig.HostPort = GroupConfig.HostPort > 0 ? GroupConfig.HostPort : 49383;
                 GroupConfig.HostAddress = hostField; // sempre host puro
                 _groupHost.Text = hostField;
                 _groupPort.Text = GroupConfig.HostPort.ToString();
