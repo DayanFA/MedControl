@@ -56,8 +56,8 @@
       "type": "process",
       "command": "${env:ProgramFiles(x86)}\\Inno Setup 6\\ISCC.exe",
       "args": [
-        "/O${workspaceFolder}\\tools\\installer\\dist",
-  "/FMedControl-Setup-1.2.1",
+          "/O${workspaceFolder}\\tools\\installer\\dist",
+        "/FMedControl-Setup-1.2.2",
         "tools/installer/MedControl.iss"
       ],
       "options": {
