@@ -315,12 +315,14 @@ namespace MedControl.Views
                     {
                         try { GroupHost.Start(); } catch { }
                         FinalizeUi("Conexões salvas.");
+                        try { _saveBtn.Enabled = false; } catch { }
                         return;
                     }
                     if (m == GroupMode.Solo)
                     {
                         try { GroupHost.Stop(); } catch { }
                         FinalizeUi("Modo Offline salvo.");
+                        try { _saveBtn.Enabled = false; } catch { }
                         return;
                     }
 
@@ -329,6 +331,7 @@ namespace MedControl.Views
                     dlg.StartPosition = FormStartPosition.CenterParent;
                     dlg.Show(this);
                     dlg.Refresh();
+                    try { _saveBtn.Enabled = false; } catch { }
 
                     Task.Run(() =>
                     {
@@ -377,6 +380,7 @@ namespace MedControl.Views
                                 FinalizeUi("Conectado e sincronizado.");
                                 try { MedControl.SyncService.ForceBeacon(); } catch { }
                                 try { MedControl.SyncService.TryAddOrUpdateSelfPeer(); } catch { }
+                                try { _saveBtn.Enabled = true; } catch { }
                             }));
                         }
                         catch (Exception ex)
@@ -475,6 +479,15 @@ namespace MedControl.Views
                 // No modo Cliente, o nome do grupo vem da lista
                 _groupName.Enabled = !isClient;
                 if (isClient) RefreshGroupsList();
+                // Botão Salvar e Conectar só habilitado em Cliente e se há host disponível
+                if (isClient)
+                {
+                    _saveBtn.Enabled = _groupSelect.Items.Count > 0 && _groupSelect.SelectedIndex >= 0;
+                }
+                else
+                {
+                    _saveBtn.Enabled = false; // Em Host usa 'Criar grupo', Offline não precisa salvar para conectar
+                }
             }
             catch { }
         }
@@ -487,19 +500,23 @@ namespace MedControl.Views
                 var curGroup = GroupConfig.GroupName ?? "default";
                 var curHost = GroupConfig.HostAddress ?? string.Empty;
                 var curPort = GroupConfig.HostPort;
+                var localNode = SyncService.LocalNodeName();
+                // Apenas hosts (role=host) e ignora este nó caso seja host
+                var hostAdverts = adverts
+                    .Where(a => string.Equals(a.Role, "host", StringComparison.OrdinalIgnoreCase) && !string.Equals(a.Node, localNode, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                var items = adverts.Select(a => new GroupItem
+                var items = hostAdverts.Select(a => new GroupItem
                 {
                     Group = a.Group,
                     Address = a.Address,
                     Port = a.HostPort,
-                    Role = string.IsNullOrWhiteSpace(a.Role) ? "" : a.Role
+                    Role = a.Role,
+                    Node = a.Node
                 }).ToList();
                 // Garante que pelo menos o grupo atual aparece (mesmo sem anúncios)
-                if (!items.Any())
-                {
-                    items.Add(new GroupItem { Group = curGroup, Address = curHost, Port = curPort, Role = string.Empty });
-                }
+                // Não adiciona fallback; se nenhum host foi encontrado deixa lista vazia
+                bool emptyHosts = !items.Any();
 
                 _groupSelect.BeginInvoke(new Action(() =>
                 {
@@ -511,8 +528,10 @@ namespace MedControl.Views
                         GroupItem? sel = null;
                         sel = items.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.Address) && string.Equals(i.Address, curHost, StringComparison.OrdinalIgnoreCase) && i.Port == curPort)
                               ?? items.FirstOrDefault(i => string.Equals(i.Group, curGroup, StringComparison.OrdinalIgnoreCase))
-                              ?? items.FirstOrDefault();
-                        if (sel != null) _groupSelect.SelectedItem = sel;
+                              ?? null;
+                        if (sel != null) _groupSelect.SelectedItem = sel; else _groupSelect.SelectedIndex = -1;
+                        // Desabilita se não há hosts
+                        _groupSelect.Enabled = !emptyHosts;
                     }
                     catch { }
                 }));
@@ -526,12 +545,14 @@ namespace MedControl.Views
             public string Address { get; set; } = string.Empty;
             public int Port { get; set; } = 0;
             public string Role { get; set; } = string.Empty;
+            public string Node { get; set; } = string.Empty;
             public override string ToString()
             {
                 var addr = !string.IsNullOrWhiteSpace(Address) && Port > 0 ? $"{Address}:{Port}" : (Port > 0 ? $"porta {Port}" : "");
-                var role = string.IsNullOrWhiteSpace(Role) ? "" : $" ({Role})";
-                if (!string.IsNullOrWhiteSpace(addr)) return $"{Group} — {addr}{role}";
-                return Group;
+                var nodePart = string.IsNullOrWhiteSpace(Node) ? "" : $" [{Node}]";
+                var rolePart = string.Equals(Role, "host", StringComparison.OrdinalIgnoreCase) ? " (host)" : (Role == "(sem hosts)" ? "" : "");
+                if (!string.IsNullOrWhiteSpace(addr)) return $"{Group} — {addr}{nodePart}{rolePart}";
+                return $"{Group}{nodePart}{rolePart}";
             }
         }
 
@@ -1035,16 +1056,38 @@ namespace MedControl.Views
             {
                 var hostField = _groupHost.Text?.Trim() ?? string.Empty;
                 var portField = _groupPort.Text?.Trim() ?? string.Empty;
+                // Remove qualquer prefixo ':' ou espaços extras no campo de porta
+                while (portField.StartsWith(":")) portField = portField.Substring(1).Trim();
+                // Se usuário colocou host:porta no campo de host, separar corretamente
                 // Se o usuário digitou host:porta diretamente no campo host, separar
                 var idx = hostField.IndexOf(':');
                 if (idx > 0 && idx < hostField.Length - 1)
                 {
                     var hostPart = hostField.Substring(0, idx).Trim();
                     var portPart = hostField.Substring(idx + 1).Trim();
+                    while (portPart.StartsWith(":")) portPart = portPart.Substring(1).Trim();
                     if (int.TryParse(portPart, out var pColon) && pColon > 0)
                     {
                         hostField = hostPart;
                         if (string.IsNullOrWhiteSpace(portField)) portField = pColon.ToString();
+                    }
+                }
+                // Sanitiza porta caso venha com host again (ex: ":49383" ou "192.168.0.5:49383")
+                if (portField.Contains(':'))
+                {
+                    var parts = portField.Split(':');
+                    var last = parts.Last();
+                    if (int.TryParse(last, out var pSplit) && pSplit > 0) portField = pSplit.ToString();
+                }
+                // Caso host contenha novamente ":porta" remover
+                var idx2 = hostField.IndexOf(':');
+                if (idx2 > 0)
+                {
+                    var maybePort = hostField.Substring(idx2 + 1).Trim();
+                    if (int.TryParse(maybePort, out var pAgain) && pAgain > 0)
+                    {
+                        hostField = hostField.Substring(0, idx2).Trim();
+                        if (string.IsNullOrWhiteSpace(portField)) portField = pAgain.ToString();
                     }
                 }
                 if (int.TryParse(portField, out var p) && p > 0) GroupConfig.HostPort = p;
