@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
 using System.Data;
+using ClosedXML.Excel;
 
 namespace MedControl.Views
 {
@@ -95,11 +96,41 @@ namespace MedControl.Views
             var btnEditar = MkNeutral("Editar");
             var btnExcluir = MkDanger("Excluir");
             var btnMaisInfo = MkNeutral("Mais Info");
+            // Novos botões Importar/Exportar com design do CadastroAlunos (tamanho fixo, cores distintas)
+            Button MakeImportExport(string text, Color baseColor)
+            {
+                var b = new Button
+                {
+                    Text = text,
+                    AutoSize = false,
+                    Size = new Size(150, 44),
+                    MinimumSize = new Size(150, 44),
+                    Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point),
+                    ImageAlign = ContentAlignment.MiddleLeft,
+                    TextImageRelation = TextImageRelation.ImageBeforeText,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = baseColor,
+                    ForeColor = Color.White,
+                    Cursor = Cursors.Hand,
+                    Margin = new Padding(4, 6, 4, 6)
+                };
+                b.FlatAppearance.BorderSize = 0;
+                Color DarkenLocal(Color c, int amt) => Color.FromArgb(c.A, Math.Max(0,c.R-amt), Math.Max(0,c.G-amt), Math.Max(0,c.B-amt));
+                var hover = DarkenLocal(baseColor, 12);
+                var pressed = DarkenLocal(baseColor, 22);
+                b.MouseEnter += (_, __) => b.BackColor = hover;
+                b.MouseLeave += (_, __) => b.BackColor = baseColor;
+                b.MouseDown += (_, __) => b.BackColor = pressed;
+                b.MouseUp += (_, __) => b.BackColor = hover;
+                return b;
+            }
+            var btnImportExcel = MakeImportExport("⬇️ Importar Excel", Color.FromArgb(33,150,243));
+            var btnExportExcel = MakeImportExport("📤 Exportar Excel", Color.FromArgb(76,175,80));
             // search box com placeholder e emoji
             _search.Width = 260; _search.Font = new Font("Segoe UI", 10F); _search.Margin = new Padding(18, 6, 3, 3);
             try { _search.PlaceholderText = "🔎 Pesquisar..."; } catch { }
             _search.TextChanged += (_, __) => { _searchText = _search.Text?.Trim() ?? string.Empty; ApplyFiltersAndBind(); };
-            panelTop.Controls.AddRange(new Control[] { btnDevolvido, btnEditar, btnExcluir, btnMaisInfo, _search });
+            panelTop.Controls.AddRange(new Control[] { btnImportExcel, btnExportExcel, btnDevolvido, btnEditar, btnExcluir, btnMaisInfo, _search });
 
             // Grid styling
             _grid.ReadOnly = true;
@@ -186,6 +217,8 @@ namespace MedControl.Views
             btnEditar.Click += (_, __) => EditarEntrega();
             btnExcluir.Click += (_, __) => ExcluirEntrega();
             btnMaisInfo.Click += (_, __) => MaisInfo();
+            btnExportExcel.Click += (_, __) => ExportarExcel();
+            btnImportExcel.Click += (_, __) => ImportarExcel();
         }
 
         public EntregasForm(string chaveFiltro) : this()
@@ -774,6 +807,141 @@ namespace MedControl.Views
             int g = Math.Max(0, color.G - amount);
             int b = Math.Max(0, color.B - amount);
             return Color.FromArgb(color.A, r, g, b);
+        }
+
+        // ===== Excel Export/Import (Histórico de entregas / Relatório) =====
+        private void ExportarExcel()
+        {
+            // Exporta histórico (tabela Relatorio) filtrando opcionalmente por chave
+            var dados = Database.GetRelatorios();
+            if (!string.IsNullOrWhiteSpace(_chaveFiltro))
+                dados = dados.Where(r => string.Equals(r.Chave, _chaveFiltro, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (dados.Count == 0)
+            {
+                MessageBox.Show("Não há registros para exportar.");
+                return;
+            }
+            using var sfd = new SaveFileDialog { Filter = "Excel (*.xlsx)|*.xlsx", FileName = string.IsNullOrWhiteSpace(_chaveFiltro) ? "Relacao_Chaves.xlsx" : $"Relacao_{_chaveFiltro}.xlsx" };
+            if (sfd.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                using var wb = new XLWorkbook();
+                var ws = wb.AddWorksheet("Relação de Chaves");
+                string[] headers = { "Chave", "Aluno", "Professor", "DataHora", "DataDevolucao", "TempoComChave", "Termo" };
+                for (int i = 0; i < headers.Length; i++) ws.Cell(1, i + 1).Value = headers[i];
+                int row = 2;
+                foreach (var r in dados)
+                {
+                    ws.Cell(row, 1).Value = r.Chave;
+                    ws.Cell(row, 2).Value = r.Aluno ?? "";
+                    ws.Cell(row, 3).Value = r.Professor ?? "";
+                    ws.Cell(row, 4).Value = r.DataHora;
+                    ws.Cell(row, 5).Value = r.DataDevolucao;
+                    ws.Cell(row, 6).Value = r.TempoComChave ?? "";
+                    ws.Cell(row, 7).Value = r.Termo ?? "";
+                    row++;
+                }
+                wb.SaveAs(sfd.FileName);
+                MessageBox.Show("Exportado com sucesso.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Falha ao exportar: " + ex.Message);
+            }
+        }
+
+        private void ImportarExcel()
+        {
+            using var ofd = new OpenFileDialog { Filter = "Excel (*.xlsx)|*.xlsx", Title = "Importar Excel - Relação" };
+            if (ofd.ShowDialog(this) != DialogResult.OK) return;
+            int imported = 0, skipped = 0, errors = 0;
+            var existing = Database.GetRelatorios();
+            try
+            {
+                using var wb = new XLWorkbook(ofd.FileName);
+                var ws = wb.Worksheets.First();
+                // Map headers
+                var headers = ws.Row(1).CellsUsed().ToDictionary(c => c.GetString().Trim(), c => c.Address.ColumnNumber, StringComparer.OrdinalIgnoreCase);
+                int Col(string name, params string[] aliases)
+                {
+                    if (headers.TryGetValue(name, out var idx)) return idx;
+                    foreach (var a in aliases) if (headers.TryGetValue(a, out idx)) return idx;
+                    return -1;
+                }
+                int cChave = Col("Chave");
+                int cAluno = Col("Aluno");
+                int cProf = Col("Professor");
+                int cDataHora = Col("DataHora", "Data e Hora", "Retirada");
+                int cDataDev = Col("DataDevolucao", "Data de Devolução", "Devolução");
+                int cTempo = Col("TempoComChave", "Tempo", "Tempo com a Chave");
+                int cTermo = Col("Termo", "Termo de Compromisso");
+                if (cChave == -1 || cDataHora == -1)
+                {
+                    MessageBox.Show("Planilha inválida: faltam colunas obrigatórias (Chave, DataHora).", "Importar", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                int last = ws.LastRowUsed().RowNumber();
+                for (int r = 2; r <= last; r++)
+                {
+                    try
+                    {
+                        var row = ws.Row(r);
+                        string chave = cChave > 0 ? row.Cell(cChave).GetString().Trim() : string.Empty;
+                        if (string.IsNullOrWhiteSpace(chave)) continue;
+                        string aluno = cAluno > 0 ? row.Cell(cAluno).GetString().Trim() : string.Empty;
+                        string prof = cProf > 0 ? row.Cell(cProf).GetString().Trim() : string.Empty;
+                        string tempo = cTempo > 0 ? row.Cell(cTempo).GetString().Trim() : string.Empty;
+                        string termo = cTermo > 0 ? row.Cell(cTermo).GetString().Trim() : string.Empty;
+                        DateTime dataHora;
+                        var rawDataHora = cDataHora > 0 ? row.Cell(cDataHora).GetString().Trim() : string.Empty;
+                        if (string.IsNullOrWhiteSpace(rawDataHora) && cDataHora > 0 && row.Cell(cDataHora).DataType == XLDataType.DateTime)
+                            dataHora = row.Cell(cDataHora).GetDateTime();
+                        else if (!TryParseDate(rawDataHora, out dataHora)) { errors++; continue; }
+                        DateTime? dataDev = null;
+                        if (cDataDev > 0)
+                        {
+                            var rawDataDev = row.Cell(cDataDev).GetString().Trim();
+                            if (string.IsNullOrWhiteSpace(rawDataDev) && row.Cell(cDataDev).DataType == XLDataType.DateTime)
+                                dataDev = row.Cell(cDataDev).GetDateTime();
+                            else if (!string.IsNullOrWhiteSpace(rawDataDev) && TryParseDate(rawDataDev, out var tmp)) dataDev = tmp;
+                            else if (!string.IsNullOrWhiteSpace(rawDataDev)) { errors++; continue; }
+                        }
+                        var rel = new Relatorio
+                        {
+                            Chave = chave,
+                            Aluno = aluno,
+                            Professor = prof,
+                            DataHora = dataHora,
+                            DataDevolucao = dataDev,
+                            TempoComChave = tempo,
+                            Termo = termo
+                        };
+                        if (existing.Any(e => e.Chave == rel.Chave && e.Aluno == rel.Aluno && e.Professor == rel.Professor && e.DataHora == rel.DataHora))
+                        { skipped++; continue; }
+                        try { Database.InsertRelatorio(rel); imported++; }
+                        catch { errors++; }
+                    }
+                    catch { errors++; }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Falha ao importar: " + ex.Message, "Importar", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            RefreshGrid();
+            MessageBox.Show($"Importação concluída. Inseridos: {imported}. Ignorados (duplicados): {skipped}. Erros: {errors}.", "Importar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private bool TryParseDate(string input, out DateTime dt)
+        {
+            var formats = new[]{ "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-ddTHH:mm:ss", "yyyy-MM-ddTHH:mm" };
+            foreach (var f in formats)
+            {
+                if (DateTime.TryParseExact(input, f, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out dt)) return true;
+            }
+            if (DateTime.TryParse(input, out dt)) return true;
+            dt = DateTime.MinValue; return false;
         }
     }
 }

@@ -47,6 +47,20 @@ namespace MedControl
 
             try
             {
+                // Se há HostAddress configurado, tenta capturar automaticamente nome do grupo e porta do Host
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                    {
+                        if (GroupClient.Hello(out var gname, out var hport, out var herr))
+                        {
+                            GroupConfig.GroupName = gname ?? "default";
+                            GroupConfig.HostPort = hport;
+                        }
+                    }
+                }
+                catch { }
+
                 splash.SetStatus("Verificando host...");
                 string? _;
                 if (!GroupClient.Ping(out _)) return; // sem host – segue local
@@ -94,6 +108,10 @@ namespace MedControl
             catch { }
 
             await Task.Delay(200);
+
+            // Anuncia presença e atualiza cache de peers para que a UI já mostre online
+            try { MedControl.SyncService.ForceBeacon(); } catch { }
+            try { MedControl.SyncService.TryAddOrUpdateSelfPeer(); } catch { }
         }
     }
 }

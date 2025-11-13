@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.IO;
 
 namespace MedControl.Views
 {
@@ -45,7 +46,7 @@ namespace MedControl.Views
 
         public ConexoesForm()
         {
-            Text = "Conexões e Chat";
+            Text = "Conexões";
             StartPosition = FormStartPosition.CenterParent;
             Width = 980;
             Height = 720;
@@ -100,9 +101,9 @@ namespace MedControl.Views
             _groupHost = new TextBox { Dock = DockStyle.Fill };
             _groupPort = new TextBox { Dock = DockStyle.Fill };
             _groupPassword = new TextBox { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
-            _testConn = new Button { Text = "Testar Conexão", AutoSize = true };
-            _saveBtn = new Button { Text = "Salvar", AutoSize = true };
-            _connectBtn = new Button { Text = "Conectar", AutoSize = true };
+            _testConn = new Button { Text = "Testar Conexão", AutoSize = true, Visible = false, Enabled = false };
+            _saveBtn = new Button { Text = "Salvar e Conectar", AutoSize = true };
+            _connectBtn = new Button { Text = "Conectar", AutoSize = true, Visible = false, Enabled = false };
             _createGroupBtn = new Button { Text = "Criar grupo (Host)", AutoSize = true };
 
             cfg.Controls.Add(Mk("Modo de Grupo:"), 0, 0);
@@ -116,7 +117,7 @@ namespace MedControl.Views
             _cfgLblHost = Mk("Host (modo Host):");
             cfg.Controls.Add(_cfgLblHost, 0, 2);
             cfg.Controls.Add(_groupHost, 1, 2);
-            cfg.Controls.Add(_testConn, 2, 2);
+            cfg.Controls.Add(new Label { Text = " ", AutoSize = true }, 2, 2); // espaço: botão de teste removido
 
             _cfgLblPort = Mk("Porta do Host:");
             cfg.Controls.Add(_cfgLblPort, 0, 3);
@@ -134,7 +135,7 @@ namespace MedControl.Views
             cfg.Controls.Add(_createGroupBtn, 2, 5);
 
             cfg.Controls.Add(new Label { Text = " " }, 0, 6);
-            cfg.Controls.Add(_connectBtn, 1, 6);
+            cfg.Controls.Add(new Label { Text = " " }, 1, 6); // espaço onde ficava Conectar
             cfg.Controls.Add(_saveBtn, 2, 6);
 
             // Peers list
@@ -160,7 +161,7 @@ namespace MedControl.Views
             peersGroup.Controls.Add(_loadingPanel);
 
             // Chat
-            var chatGroup = new GroupBox { Text = "Chat do grupo", Dock = DockStyle.Fill };
+            var chatGroup = new GroupBox { Text = "Chat do grupo", Dock = DockStyle.Fill }; // mantém título
             var chatLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
             chatLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             chatLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -233,6 +234,8 @@ namespace MedControl.Views
             };
         }
 
+        private string _chatHistoryPath = string.Empty;
+
         private void OnLoaded()
         {
             // Ensure sync service is running
@@ -265,9 +268,7 @@ namespace MedControl.Views
             catch { }
 
             _groupMode.SelectedIndexChanged += (_, __) => { ToggleGroupUi(); UpdateStatusTimerMode(); };
-            _testConn.Click += (_, __) => DoTestConn();
             _saveBtn.Click += (_, __) => DoSave();
-            _connectBtn.Click += (_, __) => DoConnect();
             _createGroupBtn.Click += (_, __) => DoCreateGroup();
             
             void DoSave()
@@ -275,41 +276,127 @@ namespace MedControl.Views
                 try
                 {
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
-                    // Sempre atualiza nome/porta/host/senha a partir dos campos
+                    // Atualiza config base
                     GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
-                    if (int.TryParse(_groupPort.Text?.Trim(), out var port) && port > 0) GroupConfig.HostPort = port;
+                    if (int.TryParse(_groupPort.Text?.Trim(), out var portTmp) && portTmp > 0) GroupConfig.HostPort = portTmp;
                     GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
                     GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
-                    // Campo de apelido removido; não alterar node_alias aqui
+                    GroupConfig.Mode = m;
 
-                    GroupConfig.Mode = m; // Persistir modo imediatamente, inclusive Cliente
-                    if (m == GroupMode.Client)
+                    if (m == GroupMode.Host)
                     {
-                        // No modo Cliente, ao salvar já executa a sincronização com loading (sem exigir IP)
-                        DoConnect();
+                        try { GroupHost.Start(); } catch { }
+                        FinalizeUi("Conexões salvas.");
+                        return;
+                    }
+                    if (m == GroupMode.Solo)
+                    {
+                        try { GroupHost.Stop(); } catch { }
+                        FinalizeUi("Modo Offline salvo.");
                         return;
                     }
 
-                    // Para Host/Offline: aplica e salva normalmente
-                    try { if (m == GroupMode.Host) GroupHost.Start(); else GroupHost.Stop(); } catch { }
+                    // Modo Cliente: fazer Hello+Ping+Sync num fluxo único
+                    using var dlg = new SyncProgressForm();
+                    dlg.StartPosition = FormStartPosition.CenterParent;
+                    dlg.Show(this);
+                    dlg.Refresh();
 
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            dlg.BeginInvoke(new Action(() => dlg.SetProgress(5, "Preparando...")));
+                            // Tenta Hello se endereço informado
+                            if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
+                            {
+                                if (GroupClient.Hello(out var gname, out var hport, out var herr))
+                                {
+                                    GroupConfig.GroupName = gname ?? "default";
+                                    GroupConfig.HostPort = hport;
+                                }
+                            }
+                            dlg.BeginInvoke(new Action(() => dlg.SetProgress(12, "Verificando host...")));
+                            if (!GroupClient.Ping(out var msg, connectTimeoutMs: 1500, ioTimeoutMs: 2000))
+                                throw new Exception(string.IsNullOrWhiteSpace(msg) ? "Host indisponível" : msg);
+
+                            int step = 0; int total = 5;
+                            string syncLogPath = Path.Combine(AppContext.BaseDirectory, "sync_download.log");
+                            void LogSync(string dataset, int count)
+                            {
+                                try { File.AppendAllText(syncLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {dataset}: {count} registros baixados\n"); } catch { }
+                            }
+                            void Step(string label, int count)
+                            {
+                                step++;
+                                var percent = Math.Min(100, Math.Max(0, (int)Math.Round(step * 100.0 / total)));
+                                var display = count >= 0 ? $"{label} (#{count})" : label;
+                                dlg.BeginInvoke(new Action(() => dlg.SetProgress(percent, display)));
+                                LogSync(label, count);
+                            }
+                            // Sincronização
+                            var chaves = GroupClient.PullChaves(); Database.ReplaceAllChavesLocal(chaves); Step("Chaves", chaves.Count);
+                            var reservas = GroupClient.PullReservas(); Database.ReplaceAllReservas(reservas); Step("Reservas", reservas.Count);
+                            var rels = GroupClient.PullRelatorio(); Database.ReplaceAllRelatorios(rels); Step("Relatórios", rels.Count);
+                            var alunos = GroupClient.PullAlunos(); Database.ReplaceAllAlunos(alunos); Step("Alunos", alunos.Rows.Count);
+                            var profs = GroupClient.PullProfessores(); Database.ReplaceAllProfessores(profs); Step("Professores", profs.Rows.Count);
+
+                            dlg.BeginInvoke(new Action(() => dlg.Close()));
+                            BeginInvoke(new Action(() =>
+                            {
+                                FinalizeUi("Conectado e sincronizado.");
+                                try { MedControl.SyncService.ForceBeacon(); } catch { }
+                                try { MedControl.SyncService.TryAddOrUpdateSelfPeer(); } catch { }
+                            }));
+                        }
+                        catch (Exception ex)
+                        {
+                            try { dlg.BeginInvoke(new Action(() => dlg.Close())); } catch { }
+                            BeginInvoke(new Action(() => FinalizeUi("Falha: " + ex.Message, isError:true)));
+                        }
+                    });
+
+                    // Loop de mensagens até terminar
+                    while (dlg.Visible)
+                    {
+                        Application.DoEvents();
+                        System.Threading.Thread.Sleep(50);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Erro: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+
+            void FinalizeUi(string message, bool isError = false)
+            {
+                try
+                {
                     _lblMode.Text = $"Modo: {ModeDisplay(GroupConfig.Mode)}";
                     _lblGroup.Text = $"Grupo: {GroupConfig.GroupName}";
                     var host = GroupConfig.Mode == GroupMode.Host ? $"localhost:{GroupConfig.HostPort}" : GroupConfig.HostAddress;
                     if (string.IsNullOrWhiteSpace(host)) host = $"porta {GroupConfig.HostPort}";
                     _lblHost.Text = $"Host/Porta: {host}";
                     _lblSelf.Text = $"Este nó: {MedControl.SyncService.LocalNodeName()}";
-
-                    MessageBox.Show(this, "Conexões salvas.", "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     UpdateStatusTimerMode();
+                    if (!isError) MessageBox.Show(this, message, "OK", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    else MessageBox.Show(this, message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, "Erro ao salvar conexões: " + ex.Message, "Erro", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
+                catch { }
             }
             ToggleGroupUi();
             UpdateStatusTimerMode();
+
+            // Define caminho do histórico de chat (por grupo)
+            try
+            {
+                var safeGroup = (GroupConfig.GroupName ?? "default").Trim();
+                foreach (var c in System.IO.Path.GetInvalidFileNameChars()) safeGroup = safeGroup.Replace(c, '_');
+                _chatHistoryPath = System.IO.Path.Combine(AppContext.BaseDirectory, $"chat_{safeGroup}.log");
+                LoadChatHistory();
+            }
+            catch { }
 
             // Subscribe events
             SyncService.PeersChanged += SyncService_PeersChanged;
@@ -432,25 +519,35 @@ namespace MedControl.Views
                             throw new Exception(string.IsNullOrWhiteSpace(msg) ? "Host indisponível" : msg);
 
                         // Baixa e importa
+                        string syncLogPath2 = Path.Combine(AppContext.BaseDirectory, "sync_download.log");
+                        void LogSync2(string dataset, int count)
+                        {
+                            try { File.AppendAllText(syncLogPath2, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {dataset}: {count} registros baixados\n"); } catch { }
+                        }
                         step = 1; Progress("Sincronizando 20% – Baixando chaves...");
                         var chaves = GroupClient.PullChaves();
                         Database.ReplaceAllChavesLocal(chaves);
+                        LogSync2("Chaves", chaves.Count);
 
                         step = 2; Progress("Sincronizando 40% – Baixando reservas...");
                         var reservas = GroupClient.PullReservas();
                         Database.ReplaceAllReservas(reservas);
+                        LogSync2("Reservas", reservas.Count);
 
                         step = 3; Progress("Sincronizando 60% – Baixando relatórios...");
                         var rels = GroupClient.PullRelatorio();
                         Database.ReplaceAllRelatorios(rels);
+                        LogSync2("Relatórios", rels.Count);
 
                         step = 4; Progress("Sincronizando 80% – Baixando alunos...");
                         var alunos = GroupClient.PullAlunos();
                         Database.ReplaceAllAlunos(alunos);
+                        LogSync2("Alunos", alunos.Rows.Count);
 
                         step = 5; Progress("Sincronizando 100% – Baixando professores...");
                         var profs = GroupClient.PullProfessores();
                         Database.ReplaceAllProfessores(profs);
+                        LogSync2("Professores", profs.Rows.Count);
 
                         // Conclui
                         dlg.BeginInvoke(new Action(() => dlg.Close()));
@@ -742,7 +839,7 @@ namespace MedControl.Views
             };
         }
 
-        private void AppendChatLine(string sender, string message, DateTime localTime, string address)
+        private void AppendChatLine(string sender, string message, DateTime localTime, string address, bool persist = true)
         {
             try
             {
@@ -768,6 +865,7 @@ namespace MedControl.Views
                         _chatLog.SelectionStart = _chatLog.TextLength;
                         _chatLog.ScrollToCaret();
                     }
+                    if (persist) SaveChatLine(time, sender, address, message);
                 }
                 catch { }
             }
@@ -783,6 +881,35 @@ namespace MedControl.Views
                 _messageBox.Clear();
                 SyncService.SendChat(text);
                 AppendChatLine("Você", text, DateTime.Now, "local");
+            }
+            catch { }
+        }
+
+        private void SaveChatLine(string time, string sender, string address, string message)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_chatHistoryPath)) return;
+                var line = $"[{time}] {sender} ({address}): {message}";
+                System.IO.File.AppendAllText(_chatHistoryPath, line + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        private void LoadChatHistory()
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_chatHistoryPath)) return;
+                if (!System.IO.File.Exists(_chatHistoryPath)) return;
+                var lines = System.IO.File.ReadAllLines(_chatHistoryPath);
+                foreach (var raw in lines)
+                {
+                    // Não tenta re-colorir historico: append direto
+                    _chatLog.AppendText(raw + Environment.NewLine);
+                }
+                _chatLog.SelectionStart = _chatLog.TextLength;
+                _chatLog.ScrollToCaret();
             }
             catch { }
         }

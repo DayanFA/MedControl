@@ -17,16 +17,12 @@ namespace MedControl.Views
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 6,
+                RowCount = 7,
                 Padding = new Padding(18, 18, 18, 12),
-                AutoSize = true,
+                AutoScroll = true // permite scroll se janela menor
             };
-            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            // Cada linha autoajustada para garantir visibilidade do botão
+            for (int i = 0; i < 7; i++) main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             var title = new Label
             {
@@ -39,10 +35,11 @@ namespace MedControl.Views
 
             var version = new Label
             {
-                Text = $"v {GetVersionString()}",
+                Text = $"Versão: {GetVersionString()}",
                 AutoSize = true,
-                Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
-                Margin = new Padding(0, 0, 0, 12)
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold, GraphicsUnit.Point),
+                Margin = new Padding(0, 0, 0, 12),
+                Tag = "keep-font"
             };
 
             var desc = new Label
@@ -103,13 +100,13 @@ namespace MedControl.Views
                 catch { btnUpdate.Enabled = true; }
             };
 
-            main.Controls.Add(title);
-            main.Controls.Add(version);
-            main.Controls.Add(desc);
-            main.Controls.Add(lic);
-            main.Controls.Add(linkIntro);
-            main.Controls.Add(link);
-            main.Controls.Add(btnUpdate);
+            main.Controls.Add(title, 0, 0);
+            main.Controls.Add(version, 0, 1);
+            main.Controls.Add(desc, 0, 2);
+            main.Controls.Add(lic, 0, 3);
+            main.Controls.Add(linkIntro, 0, 4);
+            main.Controls.Add(link, 0, 5);
+            main.Controls.Add(btnUpdate, 0, 6);
             Controls.Add(main);
 
             // Aplicar tema atual
@@ -122,10 +119,17 @@ namespace MedControl.Views
             {
                 var v = Application.ProductVersion;
                 // Normaliza para Major.Minor.Build
+                // Remove qualquer sufixo (+hash ou -beta) e manter Major.Minor.Patch
+                v = v.Trim();
+                var metaIdx = v.IndexOfAny(new[] { '+', '-' });
+                if (metaIdx > 0) v = v.Substring(0, metaIdx);
                 var parts = v.Split('.');
                 if (parts.Length >= 3)
                     return string.Join('.', parts[0], parts[1], parts[2]);
-                return v;
+                // Garante sempre pelo menos 3 componentes
+                if (parts.Length == 2) return parts[0] + "." + parts[1] + ".0";
+                if (parts.Length == 1) return parts[0] + ".0.0";
+                return "1.0.0";
             }
             catch { return "1.0.0"; }
         }

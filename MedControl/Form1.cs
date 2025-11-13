@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using MedControl.UI;
+using System.IO;
 
 namespace MedControl
 {
@@ -24,6 +25,12 @@ namespace MedControl
     private System.Windows.Forms.Timer? _statusTimer;
     // Usado para reduzir flicker: evita reconstruir a UI se nada relevante mudou
     private string? _lastKeysSignature;
+    // Último RTT medido (ms) para exibir na barra de status
+    private int _lastRttMs = -1;
+    private System.Windows.Forms.Timer? _heartbeatTimer;
+    private bool _allowExit = false; // controla saída real
+    private NotifyIcon? _trayIcon; // ícone de bandeja
+    private ContextMenuStrip? _trayMenu; // menu da bandeja
 
         public Form1()
         {
@@ -31,6 +38,19 @@ namespace MedControl
             Text = "Sistema de Empréstimo de Chaves";
             Width = 1000;
             Height = 700;
+
+            // Carrega ícone único do aplicativo (janela + bandeja) se existir
+            try
+            {
+                var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
+                if (File.Exists(iconPath))
+                {
+                    // Usa um único objeto Icon para manter consistência
+                    var ico = new Icon(iconPath);
+                    this.Icon = ico;
+                }
+            }
+            catch { }
 
             Load += (_, __) => Database.Setup();
 
@@ -55,7 +75,7 @@ namespace MedControl
                 ApplyTheme();
                 RefreshKeysUi();
             });
-            configuracoes.DropDownItems.Add("Conexões (Chat)", null, (_, __) =>
+            configuracoes.DropDownItems.Add("Conexões", null, (_, __) =>
             {
                 new Views.ConexoesForm().ShowDialog(this);
             });
@@ -82,6 +102,9 @@ namespace MedControl
             _menu.Items.Add(_statusDot);
             MainMenuStrip = _menu;
             Controls.Add(_menu);
+
+            // Bandeja (NotifyIcon) para manter aplicação acessível quando minimizada
+            InitTrayIcon();
 
             // Styled main panel similar to Python UI
             _mainPanel = new Panel
@@ -155,6 +178,11 @@ namespace MedControl
                     _statusTimer.Tick += (_, __) => UpdateConnectionStatus(false);
                     _statusTimer.Start();
                     UpdateConnectionStatus(true);
+                    // Heartbeat de saúde a cada 5 minutos para diagnosticar fechamentos inesperados
+                    _heartbeatTimer = new System.Windows.Forms.Timer { Interval = 5 * 60 * 1000 };
+                    _heartbeatTimer.Tick += (_, __) => WriteHeartbeat();
+                    _heartbeatTimer.Start();
+                    WriteHeartbeat();
                 }
                 catch { }
             };
@@ -481,23 +509,41 @@ namespace MedControl
                 if (mode == GroupMode.Client)
                 {
                     SetStatusLabel(null, "Cliente");
-                    // Non-blocking ping
+                    // Non-blocking ping + RTT
                     Task.Run(() =>
                     {
-                        bool ok; string? msg;
-                        try { ok = GroupClient.Ping(out msg); }
-                        catch (Exception ex) { ok = false; msg = ex.Message; }
+                        bool ok; string? msg; int rtt;
+                        try { ok = GroupClient.Ping(out msg, out rtt); }
+                        catch (Exception ex) { ok = false; msg = ex.Message; rtt = -1; }
+                        if (ok && rtt >= 0) _lastRttMs = rtt; // guarda último RTT válido
                         try
                         {
                             if (IsHandleCreated)
-                                BeginInvoke(new Action(() => SetStatusLabel(ok, ok ? "Cliente" : ("Offline" + (string.IsNullOrWhiteSpace(msg) ? string.Empty : " – " + msg)))));
+                            {
+                                BeginInvoke(new Action(() =>
+                                {
+                                    string detail;
+                                    if (ok)
+                                    {
+                                        // Exibe modo + RTT
+                                        detail = _lastRttMs >= 0 ? $"Cliente – {_lastRttMs} ms" : "Cliente";
+                                    }
+                                    else
+                                    {
+                                        detail = "Offline" + (string.IsNullOrWhiteSpace(msg) ? string.Empty : " – " + msg);
+                                    }
+                                    SetStatusLabel(ok, detail);
+                                }));
+                            }
                         }
                         catch { }
                     });
                 }
                 else if (mode == GroupMode.Host)
                 {
-                    SetStatusLabel(true, "Host");
+                    // Host local: considera RTT ~0ms
+                    _lastRttMs = 0;
+                    SetStatusLabel(true, "Host – 0 ms");
                 }
                 else
                 {
@@ -712,6 +758,104 @@ namespace MedControl
                 return $"{m}m {s}s";
             }
             return $"{ts.Seconds}s";
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            // Se o usuário clicou no X e não pediu saída real, apenas minimiza
+            if (!_allowExit && e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                WindowState = FormWindowState.Minimized;
+                ShowInTaskbar = false; // oculta da barra; acessível pela bandeja
+                return;
+            }
+            // Saída real
+            try
+            {
+                Program.MarkShuttingDown($"FormClosing Reason={e.CloseReason}; AllowExit={_allowExit}");
+                WriteHeartbeat("closing");
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                }
+            }
+            catch { }
+            base.OnFormClosing(e);
+        }
+
+        private void WriteHeartbeat(string state = "alive")
+        {
+            try
+            {
+                var logPath = Path.Combine(AppContext.BaseDirectory, "AppErrors.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Heartbeat: {state}; Mode={GroupConfig.Mode}; RTT={_lastRttMs}\n");
+            }
+            catch { }
+        }
+
+        private void InitTrayIcon()
+        {
+            try
+            {
+                if (_trayIcon != null) return; // já inicializado
+                _trayMenu = new ContextMenuStrip();
+                _trayMenu.Items.Add("Abrir", null, (_, __) => RestoreFromTray());
+                _trayMenu.Items.Add("Sair", null, (_, __) => { _allowExit = true; Close(); });
+                _trayIcon = new NotifyIcon
+                {
+                    Icon = this.Icon ?? SystemIcons.Application,
+                    Text = "MedControl",
+                    Visible = true,
+                    ContextMenuStrip = _trayMenu
+                };
+                _trayIcon.DoubleClick += (_, __) => RestoreFromTray();
+            }
+            catch { }
+        }
+
+        private void UpdateTrayIcon()
+        {
+            try
+            {
+                if (_trayIcon != null && this.Icon != null)
+                {
+                    _trayIcon.Icon = this.Icon; // garante que sejam iguais
+                }
+            }
+            catch { }
+        }
+
+        protected override void OnActivated(EventArgs e)
+        {
+            base.OnActivated(e);
+            UpdateTrayIcon();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            try
+            {
+                if (WindowState == FormWindowState.Minimized && !_allowExit)
+                {
+                    ShowInTaskbar = false;
+                    if (_trayIcon != null) _trayIcon.Visible = true;
+                }
+            }
+            catch { }
+        }
+
+        private void RestoreFromTray()
+        {
+            try
+            {
+                ShowInTaskbar = true;
+                if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+                Activate();
+            }
+            catch { }
         }
 
     }

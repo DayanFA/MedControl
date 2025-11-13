@@ -193,6 +193,50 @@ namespace MedControl
         private static async Task DownloadAndRunInstallerAsync(string url)
         {
             string tempFile = Path.Combine(Path.GetTempPath(), $"MedControl-Setup-{Guid.NewGuid():N}.exe");
+            Form? progressForm = null;
+            Label? progressLabel = null;
+            ProgressBar? progressBar = null;
+            try
+            {
+                // Cria mini janela de progresso (não modal) na UI thread
+                var owner = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+                owner?.Invoke(new Action(() =>
+                {
+                    progressForm = new Form
+                    {
+                        Text = "Atualizando MedControl",
+                        Width = 420,
+                        Height = 140,
+                        StartPosition = FormStartPosition.CenterScreen,
+                        FormBorderStyle = FormBorderStyle.FixedDialog,
+                        MaximizeBox = false,
+                        MinimizeBox = false,
+                        ShowInTaskbar = false,
+                        TopMost = true
+                    };
+                    progressLabel = new Label
+                    {
+                        Dock = DockStyle.Top,
+                        Height = 40,
+                        TextAlign = ContentAlignment.MiddleCenter,
+                        Font = new Font("Segoe UI", 10, FontStyle.Regular),
+                        Text = "Preparando download..."
+                    };
+                    progressBar = new ProgressBar
+                    {
+                        Dock = DockStyle.Top,
+                        Height = 28,
+                        Style = ProgressBarStyle.Marquee,
+                        MarqueeAnimationSpeed = 30
+                    };
+                    var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(18) };
+                    panel.Controls.Add(progressBar);
+                    panel.Controls.Add(progressLabel);
+                    progressForm.Controls.Add(panel);
+                    progressForm.Show(owner);
+                }));
+            }
+            catch { }
             try
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -200,6 +244,20 @@ namespace MedControl
                 using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
                 resp.EnsureSuccessStatusCode();
                 var total = resp.Content.Headers.ContentLength ?? -1L;
+
+                // Ajusta barra se soubermos o tamanho
+                if (progressBar != null && progressLabel != null)
+                {
+                    progressBar.Invoke(new Action(() =>
+                    {
+                        if (total > 0)
+                        {
+                            progressBar.Style = ProgressBarStyle.Continuous;
+                            progressBar.Minimum = 0; progressBar.Maximum = 100; progressBar.Value = 0;
+                        }
+                        progressLabel.Text = total > 0 ? "Baixando atualização..." : "Baixando (tamanho desconhecido)...";
+                    }));
+                }
 
                 using var src = await resp.Content.ReadAsStreamAsync();
                 using var dst = File.Create(tempFile);
@@ -210,17 +268,50 @@ namespace MedControl
                 {
                     await dst.WriteAsync(buffer.AsMemory(0, n));
                     read += n;
+                    if (progressBar != null && progressLabel != null && total > 0)
+                    {
+                        var pct = (int)Math.Round(read * 100d / total);
+                        var mbRead = read / 1024d / 1024d;
+                        var mbTot = total / 1024d / 1024d;
+                        try
+                        {
+                            progressBar.Invoke(new Action(() =>
+                            {
+                                progressBar.Value = Math.Min(100, Math.Max(0, pct));
+                                progressLabel.Text = $"Baixando atualização... {pct}% ({mbRead:F1} MB de {mbTot:F1} MB)";
+                            }));
+                        }
+                        catch { }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 try { File.Delete(tempFile); } catch { }
+                try
+                {
+                    progressForm?.Invoke(new Action(() =>
+                    {
+                        progressLabel!.Text = "Falha no download.";
+                        progressBar!.Style = ProgressBarStyle.Blocks;
+                        progressBar.Value = 0;
+                        progressForm!.Close();
+                    }));
+                }
+                catch { }
                 MessageBox.Show("Falha ao baixar a atualização: " + ex.Message, "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
             try
             {
+                if (progressForm != null && progressLabel != null)
+                {
+                    progressForm.Invoke(new Action(() =>
+                    {
+                        progressLabel.Text = "Iniciando instalador...";
+                    }));
+                }
                 // Executa instalador Inno Setup em modo silencioso. Ele cuidará da atualização (mesmo AppId).
                 var psi = new ProcessStartInfo
                 {
@@ -229,12 +320,26 @@ namespace MedControl
                     UseShellExecute = true,
                 };
                 Process.Start(psi);
+                try
+                {
+                    progressForm?.Invoke(new Action(() => progressForm!.Close()));
+                }
+                catch { }
                 // Fecha o app para liberar arquivos
                 try { Application.Exit(); } catch { }
                 Environment.Exit(0);
             }
             catch (Exception ex)
             {
+                try
+                {
+                    progressForm?.Invoke(new Action(() =>
+                    {
+                        progressLabel!.Text = "Falha ao iniciar instalador.";
+                        progressBar!.Style = ProgressBarStyle.Blocks;
+                    }));
+                }
+                catch { }
                 MessageBox.Show("Falha ao iniciar o instalador: " + ex.Message, "Atualização", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

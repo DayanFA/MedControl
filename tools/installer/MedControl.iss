@@ -39,3 +39,7 @@ Name: "{commondesktop}\\MedControl"; Filename: "{app}\\MedControl.exe"; Tasks: d
 
 [Run]
 Filename: "{app}\\MedControl.exe"; Description: "Iniciar MedControl"; Flags: nowait postinstall skipifsilent
+
+[Registry]
+; Cria entrada de inicialização automática (usuário atual)
+Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; ValueName: "MedControl"; ValueData: "{app}\\MedControl.exe"; Flags: uninsdeletevalue

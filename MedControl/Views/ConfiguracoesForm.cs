@@ -216,6 +216,18 @@ namespace MedControl.Views
 
             _salvar.Click += async (_, __) =>
             {
+                // Confirmação antes de prosseguir
+                try
+                {
+                    var dr = MessageBox.Show(this,
+                        "Deseja realmente salvar e atualizar os dados?",
+                        "Confirmar Salvar",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question,
+                        MessageBoxDefaultButton.Button2);
+                    if (dr != DialogResult.Yes) return;
+                }
+                catch { }
                 // trava a UI durante a operação
                 SetBusy(true);
                 // (Conexões agora em Conexões/Chat)
@@ -265,6 +277,8 @@ namespace MedControl.Views
                             alunosPath = p;
                             // Não altera o caminho local exibido; mantém separado
                             Database.SetConfig("caminho_alunos_online", p);
+                            // Exibe caminho baixado para visibilidade
+                            _alunos.Text = p;
                         }
                         if (!string.IsNullOrWhiteSpace(_urlProfs.Text))
                         {
@@ -293,6 +307,7 @@ namespace MedControl.Views
                             profsPath = p;
                             // Não altera o caminho local exibido; mantém separado
                             Database.SetConfig("caminho_professores_online", p);
+                            _profs.Text = p;
                         }
                         if (!string.IsNullOrWhiteSpace(_urlChaves.Text))
                         {
@@ -320,6 +335,7 @@ namespace MedControl.Views
                             );
                             chavesPath = p;
                             Database.SetConfig("caminho_chaves_online", p);
+                            _chaves.Text = p;
                         }
                     }
                     else
@@ -423,9 +439,21 @@ namespace MedControl.Views
                 var savedAlunosLocal = Database.GetConfig("caminho_alunos_local") ?? Database.GetConfig("caminho_alunos") ?? string.Empty;
                 var savedProfsLocal = Database.GetConfig("caminho_professores_local") ?? Database.GetConfig("caminho_professores") ?? string.Empty;
                 var savedChavesLocal = Database.GetConfig("caminho_chaves_local") ?? Database.GetConfig("caminho_chaves") ?? string.Empty;
-                _alunos.Text = savedAlunosLocal;
-                _profs.Text = savedProfsLocal;
-                _chaves.Text = savedChavesLocal;
+                var savedAlunosOnline = Database.GetConfig("caminho_alunos_online") ?? string.Empty;
+                var savedProfsOnline = Database.GetConfig("caminho_professores_online") ?? string.Empty;
+                var savedChavesOnline = Database.GetConfig("caminho_chaves_online") ?? string.Empty;
+                if (modo == "online")
+                {
+                    _alunos.Text = FirstExisting(savedAlunosOnline, savedAlunosLocal);
+                    _profs.Text = FirstExisting(savedProfsOnline, savedProfsLocal);
+                    _chaves.Text = FirstExisting(savedChavesOnline, savedChavesLocal);
+                }
+                else
+                {
+                    _alunos.Text = FirstExisting(savedAlunosLocal, savedAlunosOnline);
+                    _profs.Text = FirstExisting(savedProfsLocal, savedProfsOnline);
+                    _chaves.Text = FirstExisting(savedChavesLocal, savedChavesOnline);
+                }
                 var theme = (Database.GetConfig("theme") ?? "padrao").ToLowerInvariant();
                 _tema.SelectedIndex = theme switch { "padrao" => 0, "claro" => 1, "escuro" => 2, "classico" => 3, "mica" => 4, "alto_contraste" => 5, "terminal" => 6, _ => 0 };
             }
@@ -580,6 +608,17 @@ namespace MedControl.Views
                 }
                 catch { }
             }
+            else
+            {
+                // Modo online: exibe caminhos baixados para transparência
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(_alunos.Text)) _alunos.Text = Database.GetConfig("caminho_alunos_online") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(_profs.Text)) _profs.Text = Database.GetConfig("caminho_professores_online") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(_chaves.Text)) _chaves.Text = Database.GetConfig("caminho_chaves_online") ?? string.Empty;
+                }
+                catch { }
+            }
         }
 
         private void SetBusy(bool busy)
@@ -624,6 +663,21 @@ namespace MedControl.Views
                     table.Columns.Remove("_id_old");
                 }
             }
+        }
+
+        private static string FirstExisting(params string[] paths)
+        {
+            foreach (var p in paths)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(p) && File.Exists(p)) return p;
+                }
+                catch { }
+            }
+            // se nenhum existir, retorna o primeiro não vazio ou vazio
+            foreach (var p in paths) if (!string.IsNullOrWhiteSpace(p)) return p;
+            return string.Empty;
         }
 
         private static string NormalizeHeader(string s)
