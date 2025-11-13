@@ -15,17 +15,8 @@ namespace MedControl
         private static readonly string ConfigPath = Path.Combine(AppContext.BaseDirectory, "dbconfig.json");
         private static AppConfigModel _instance = new AppConfigModel();
 
-        public static AppConfigModel Instance
-        {
-            get
-            {
-                if (_instance == null)
-                {
-                    Load();
-                }
-                return _instance;
-            }
-        }
+        // _instance é sempre inicializado; remover verificação redundante evita aviso de possível retorno nulo.
+        public static AppConfigModel Instance => _instance;
 
         public static void Load()
         {

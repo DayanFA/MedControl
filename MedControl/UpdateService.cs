@@ -7,6 +7,8 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Threading;
+using MedControl.UI;
 
 namespace MedControl
 {
@@ -196,6 +198,8 @@ namespace MedControl
             Form? progressForm = null;
             Label? progressLabel = null;
             ProgressBar? progressBar = null;
+            Button? cancelButton = null;
+            CancellationTokenSource cts = new CancellationTokenSource();
             try
             {
                 // Cria mini janela de progresso (não modal) na UI thread
@@ -205,8 +209,8 @@ namespace MedControl
                     progressForm = new Form
                     {
                         Text = "Atualizando MedControl",
-                        Width = 420,
-                        Height = 140,
+                        Width = 460,
+                        Height = 180,
                         StartPosition = FormStartPosition.CenterScreen,
                         FormBorderStyle = FormBorderStyle.FixedDialog,
                         MaximizeBox = false,
@@ -229,10 +233,33 @@ namespace MedControl
                         Style = ProgressBarStyle.Marquee,
                         MarqueeAnimationSpeed = 30
                     };
+                    cancelButton = new Button
+                    {
+                        Text = "Cancelar",
+                        Dock = DockStyle.Top,
+                        Height = 32,
+                        Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                        BackColor = Color.WhiteSmoke,
+                        FlatStyle = FlatStyle.Flat
+                    };
+                    cancelButton.FlatAppearance.BorderSize = 1;
+                    cancelButton.FlatAppearance.BorderColor = Color.Silver;
+                    cancelButton.Click += (_, __) =>
+                    {
+                        if (!cts.IsCancellationRequested)
+                        {
+                            cancelButton.Enabled = false;
+                            progressLabel!.Text = "Cancelando...";
+                            cts.Cancel();
+                        }
+                    };
                     var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(18) };
+                    panel.Controls.Add(cancelButton);
                     panel.Controls.Add(progressBar);
                     panel.Controls.Add(progressLabel);
                     progressForm.Controls.Add(panel);
+                    // Aplica tema atual (ignorar falhas)
+                    try { ThemeHelper.ApplyCurrentTheme(progressForm); } catch { }
                     progressForm.Show(owner);
                 }));
             }
@@ -241,7 +268,7 @@ namespace MedControl
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.UserAgent.ParseAdd("MedControl-Updater");
-                using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
                 resp.EnsureSuccessStatusCode();
                 var total = resp.Content.Headers.ContentLength ?? -1L;
 
@@ -259,14 +286,14 @@ namespace MedControl
                     }));
                 }
 
-                using var src = await resp.Content.ReadAsStreamAsync();
+                using var src = await resp.Content.ReadAsStreamAsync(cts.Token);
                 using var dst = File.Create(tempFile);
                 var buffer = new byte[81920];
                 long read = 0;
                 int n;
-                while ((n = await src.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                while ((n = await src.ReadAsync(buffer.AsMemory(0, buffer.Length), cts.Token)) > 0)
                 {
-                    await dst.WriteAsync(buffer.AsMemory(0, n));
+                    await dst.WriteAsync(buffer.AsMemory(0, n), cts.Token);
                     read += n;
                     if (progressBar != null && progressLabel != null && total > 0)
                     {
@@ -284,6 +311,22 @@ namespace MedControl
                         catch { }
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                try { File.Delete(tempFile); } catch { }
+                try
+                {
+                    progressForm?.Invoke(new Action(() =>
+                    {
+                        progressLabel!.Text = "Download cancelado.";
+                        progressBar!.Style = ProgressBarStyle.Blocks;
+                        progressBar.Value = 0;
+                        progressForm!.Close();
+                    }));
+                }
+                catch { }
+                return; // cancelado pelo usuário
             }
             catch (Exception ex)
             {
@@ -310,6 +353,7 @@ namespace MedControl
                     progressForm.Invoke(new Action(() =>
                     {
                         progressLabel.Text = "Iniciando instalador...";
+                        if (cancelButton != null) cancelButton.Enabled = false;
                     }));
                 }
                 // Executa instalador Inno Setup em modo silencioso. Ele cuidará da atualização (mesmo AppId).

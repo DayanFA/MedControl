@@ -10,6 +10,7 @@ using ClosedXML.Excel;
 
 namespace MedControl.Views
 {
+    #pragma warning disable CS8602 // Suprime aviso de possível dereferência nula (analisador não consegue inferir garantias locais)
     public class EntregasForm : Form
     {
         private DataGridView _grid = new DataGridView { Dock = DockStyle.Fill, AutoGenerateColumns = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect };
@@ -338,8 +339,9 @@ namespace MedControl.Views
             }
             r.Devolvido = true;
             r.EmUso = false;
-            r.DataDevolucao = DateTime.Now;
-            var tempo = r.DataDevolucao.Value - r.DataHora;
+            var devolucao = DateTime.Now;
+            r.DataDevolucao = devolucao;
+            var tempo = devolucao - r.DataHora; // evita uso de .Value em nullable
             var tempoStr = tempo.ToString().Split('.')[0];
             // inserir no relatorio
             Database.InsertRelatorio(new Relatorio
@@ -836,7 +838,8 @@ namespace MedControl.Views
                     ws.Cell(row, 2).Value = r.Aluno ?? "";
                     ws.Cell(row, 3).Value = r.Professor ?? "";
                     ws.Cell(row, 4).Value = r.DataHora;
-                    ws.Cell(row, 5).Value = r.DataDevolucao;
+                    // Evita aviso de possível nulo: se não houver devolução, deixa célula vazia
+                    ws.Cell(row, 5).Value = r.DataDevolucao.HasValue ? r.DataDevolucao.Value : "";
                     ws.Cell(row, 6).Value = r.TempoComChave ?? "";
                     ws.Cell(row, 7).Value = r.Termo ?? "";
                     row++;
@@ -893,16 +896,29 @@ namespace MedControl.Views
                         string tempo = cTempo > 0 ? row.Cell(cTempo).GetString().Trim() : string.Empty;
                         string termo = cTermo > 0 ? row.Cell(cTermo).GetString().Trim() : string.Empty;
                         DateTime dataHora;
-                        var rawDataHora = cDataHora > 0 ? row.Cell(cDataHora).GetString().Trim() : string.Empty;
-                        if (string.IsNullOrWhiteSpace(rawDataHora) && cDataHora > 0 && row.Cell(cDataHora).DataType == XLDataType.DateTime)
-                            dataHora = row.Cell(cDataHora).GetDateTime();
+                        var rawDataHora = cDataHora > 0 ? (row.Cell(cDataHora).GetString() ?? string.Empty).Trim() : string.Empty;
+                        if (string.IsNullOrWhiteSpace(rawDataHora) && cDataHora > 0)
+                        {
+                            var cellHora = row.Cell(cDataHora)!; // célula existe (coluna válida)
+                            if (cellHora.DataType == XLDataType.DateTime)
+                                dataHora = cellHora.GetDateTime();
+                            else if (cellHora.TryGetValue(out DateTime dtHora)) // fallback caso ClosedXML futuro
+                                dataHora = dtHora;
+                            else { errors++; continue; }
+                        }
                         else if (!TryParseDate(rawDataHora, out dataHora)) { errors++; continue; }
                         DateTime? dataDev = null;
                         if (cDataDev > 0)
                         {
-                            var rawDataDev = row.Cell(cDataDev).GetString().Trim();
-                            if (string.IsNullOrWhiteSpace(rawDataDev) && row.Cell(cDataDev).DataType == XLDataType.DateTime)
-                                dataDev = row.Cell(cDataDev).GetDateTime();
+                            var rawDataDev = (row.Cell(cDataDev).GetString() ?? string.Empty).Trim();
+                            if (string.IsNullOrWhiteSpace(rawDataDev))
+                            {
+                                var cellDev = row.Cell(cDataDev)!;
+                                if (cellDev.DataType == XLDataType.DateTime)
+                                    dataDev = cellDev.GetDateTime();
+                                else if (cellDev.TryGetValue(out DateTime dtDev))
+                                    dataDev = dtDev;
+                            }
                             else if (!string.IsNullOrWhiteSpace(rawDataDev) && TryParseDate(rawDataDev, out var tmp)) dataDev = tmp;
                             else if (!string.IsNullOrWhiteSpace(rawDataDev)) { errors++; continue; }
                         }

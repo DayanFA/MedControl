@@ -19,11 +19,12 @@ static class Program
                 var ex = e.ExceptionObject as Exception;
                 LogAndShowCrash("UnhandledException", ex);
             };
-            TaskScheduler.UnobservedTaskException += (s, e) =>
-            {
-                LogAndShowCrash("UnobservedTaskException", e.Exception);
-                try { e.SetObserved(); } catch { }
-            };
+                TaskScheduler.UnobservedTaskException += (s, e) =>
+                {
+                    // Apenas log, não mostrar popup para exceções não observadas (normal em shutdown)
+                    SafeLog("UnobservedTaskException", e.Exception?.ToString() ?? "(sem detalhes)");
+                    try { e.SetObserved(); } catch { }
+                };
             Application.ApplicationExit += (s, e) =>
             {
                 _shuttingDown = true;
@@ -52,10 +53,8 @@ static class Program
                 if (MedControl.GroupConfig.Mode == MedControl.GroupMode.Client)
                 {
                     // Tenta conectar ao Host em background na inicialização
-                    Task.Run(() =>
-                    {
-                        try { MedControl.GroupClient.Ping(out _); } catch { }
-                    });
+                        // Usa helper para evitar popup em exceções de tarefas em background
+                        SafeRun(() => Task.Run(() => { try { MedControl.GroupClient.Ping(out _); } catch { } }));
                 }
             }
             catch { }
@@ -108,4 +107,21 @@ static class Program
         }
         catch { }
     }
+        // Helper para anexar continuação que observa exceções evitando UnobservedTaskException popups
+        private static void SafeRun(Func<Task> start)
+        {
+            try
+            {
+                var t = start();
+                if (t == null) return;
+                t.ContinueWith(ct =>
+                {
+                    SafeLog("BackgroundTaskFault", ct.Exception?.ToString() ?? "(sem detalhes)");
+                }, TaskContinuationOptions.OnlyOnFaulted);
+            }
+            catch (Exception ex)
+            {
+                SafeLog("SafeRunSetupFault", ex.ToString());
+            }
+        }
 }
