@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using System.Windows.Forms;
 using MedControl.UI;
 using System.IO;
@@ -10,6 +11,7 @@ namespace MedControl
 {
     public partial class Form1 : Form
     {
+    public static Form1? Instance; // referência estática
     private MenuStrip _menu;
     private Panel _mainPanel;
     private Label _headerLabel;
@@ -35,6 +37,7 @@ namespace MedControl
         public Form1()
         {
             InitializeComponent();
+            Instance = this;
             Text = "Sistema de Empréstimo de Chaves";
             Width = 1000;
             Height = 700;
@@ -183,6 +186,33 @@ namespace MedControl
                     _heartbeatTimer.Tick += (_, __) => WriteHeartbeat();
                     _heartbeatTimer.Start();
                     WriteHeartbeat();
+                    // Listener para evento de restauração (segunda instância)
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            var restoreEvt = new EventWaitHandle(false, EventResetMode.AutoReset, "MedControl_Restore_Event");
+                            while (!Program.IsShuttingDown())
+                            {
+                                restoreEvt.WaitOne();
+                                if (Program.IsShuttingDown()) break;
+                                try
+                                {
+                                    if (IsHandleCreated)
+                                    {
+                                        BeginInvoke(new Action(() =>
+                                        {
+                                            RestoreFromTray();
+                                            Activate();
+                                            BringToFront();
+                                        }));
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                        catch { }
+                    });
                 }
                 catch { }
             };
@@ -780,6 +810,7 @@ namespace MedControl
                     _trayIcon.Visible = false;
                     _trayIcon.Dispose();
                 }
+                Instance = null; // limpa referência estática
             }
             catch { }
             base.OnFormClosing(e);
@@ -857,6 +888,8 @@ namespace MedControl
             }
             catch { }
         }
+
+        public static void RequestRestore() => Instance?.RestoreFromTray();
 
     }
 }

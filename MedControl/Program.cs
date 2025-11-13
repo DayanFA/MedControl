@@ -1,5 +1,8 @@
 using System;
 using System.Threading.Tasks;
+using System.IO;
+using System.Net.Sockets;
+using System.Threading;
 namespace MedControl;
 
 static class Program
@@ -10,6 +13,15 @@ static class Program
     [STAThread]
     static void Main()
     {
+        // Single-instance: cria mutex nomeado. Se já existir, sinaliza restauração e sai.
+        bool created;
+        using var singleMutex = new Mutex(true, "MedControlSingleInstanceMutex", out created);
+        var restoreEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "MedControl_Restore_Event");
+        if (!created)
+        {
+            try { restoreEvent.Set(); } catch { }
+            return; // evita segunda instância
+        }
         // Handlers globais para capturar exceções que poderiam encerrar o processo silenciosamente
         try
         {
@@ -82,17 +94,19 @@ static class Program
             var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {kind}: {msg}\n";
             var logPath = System.IO.Path.Combine(AppContext.BaseDirectory, "AppErrors.log");
             System.IO.File.AppendAllText(logPath, line);
-            // Apenas mostra dialog se a janela principal ainda não estiver sendo fechada
             if (!IsShuttingDown())
             {
-                MessageBox.Show($"Erro inesperado: {ex?.Message}\n\nDetalhes salvos em AppErrors.log", "Falha", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (!IsTransientNetwork(ex) && AllowCrashPopup())
+                {
+                    MessageBox.Show($"Erro inesperado: {ex?.Message}\n\nDetalhes salvos em AppErrors.log", "Falha", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
         catch { }
     }
 
     private static bool _shuttingDown;
-    private static bool IsShuttingDown() => _shuttingDown;
+    internal static bool IsShuttingDown() => _shuttingDown;
     internal static void MarkShuttingDown(string reason)
     {
         _shuttingDown = true;
@@ -106,6 +120,33 @@ static class Program
             System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {kind}: {message}\n");
         }
         catch { }
+    }
+    private static DateTime _lastCrashPopupUtc = DateTime.MinValue;
+    private static int _popupCount = 0;
+    private static bool AllowCrashPopup()
+    {
+        var now = DateTime.UtcNow;
+        // Permite no máximo 1 popup a cada 60 segundos e até 3 por sessão
+        if (_popupCount >= 3) return false;
+        if ((now - _lastCrashPopupUtc).TotalSeconds < 60) return false;
+        _lastCrashPopupUtc = now;
+        _popupCount++;
+        return true;
+    }
+    private static bool IsTransientNetwork(Exception? ex)
+    {
+        if (ex == null) return false;
+        // Verifica cadeia de InnerException por erros de socket / transporte
+        Exception? cur = ex;
+        while (cur != null)
+        {
+            if (cur is SocketException) return true;
+            if (cur is IOException && cur.Message.Contains("conexão estabelecida", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cur.Message.Contains("unable to write data to the transport connection", StringComparison.OrdinalIgnoreCase)) return true;
+            if (cur.Message.Contains("foi anulada pelo software", StringComparison.OrdinalIgnoreCase)) return true;
+            cur = cur.InnerException;
+        }
+        return false;
     }
         // Helper para anexar continuação que observa exceções evitando UnobservedTaskException popups
         private static void SafeRun(Func<Task> start)

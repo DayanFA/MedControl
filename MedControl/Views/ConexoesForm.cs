@@ -278,8 +278,7 @@ namespace MedControl.Views
                     var m = _groupMode.SelectedIndex switch { 1 => GroupMode.Host, 2 => GroupMode.Client, _ => GroupMode.Solo };
                     // Atualiza config base
                     GroupConfig.GroupName = string.IsNullOrWhiteSpace(_groupName.Text) ? "default" : _groupName.Text.Trim();
-                    if (int.TryParse(_groupPort.Text?.Trim(), out var portTmp) && portTmp > 0) GroupConfig.HostPort = portTmp;
-                    GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+                    ApplyHostPortFromFields();
                     GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
                     GroupConfig.Mode = m;
 
@@ -470,8 +469,7 @@ namespace MedControl.Views
                 GroupConfig.GroupPassword = _groupPassword.Text ?? string.Empty;
 
                 // Aplica temporariamente host/porta informados
-                if (int.TryParse(_groupPort.Text?.Trim(), out var p) && p > 0) GroupConfig.HostPort = p;
-                GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+                ApplyHostPortFromFields();
 
                 // Se houver Host informado, tenta descobrir automaticamente o nome do grupo/porta
                 if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
@@ -632,8 +630,7 @@ namespace MedControl.Views
                     MessageBox.Show(this, "Mude o modo para Cliente para testar.");
                     return;
                 }
-                if (int.TryParse(_groupPort.Text?.Trim(), out var p) && p > 0) GroupConfig.HostPort = p;
-                GroupConfig.HostAddress = _groupHost.Text?.Trim() ?? string.Empty;
+                ApplyHostPortFromFields();
                 var ok = GroupClient.Ping(out var msg, connectTimeoutMs: 1200, ioTimeoutMs: 1500);
                     // Tenta descobrir automaticamente o nome do grupo do Host informado se o Host estiver preenchido
                     if (!string.IsNullOrWhiteSpace(GroupConfig.HostAddress))
@@ -939,6 +936,32 @@ namespace MedControl.Views
                 var txt = _messageBox.Text ?? string.Empty;
                 _messageBox.Text = txt.Substring(0, selStart) + emoji + txt.Substring(selStart);
                 _messageBox.SelectionStart = selStart + emoji.Length;
+            }
+            catch { }
+        }
+
+        private void ApplyHostPortFromFields()
+        {
+            try
+            {
+                var hostField = _groupHost.Text?.Trim() ?? string.Empty;
+                var portField = _groupPort.Text?.Trim() ?? string.Empty;
+                // Se o usuário digitou host:porta diretamente no campo host, separar
+                var idx = hostField.IndexOf(':');
+                if (idx > 0 && idx < hostField.Length - 1)
+                {
+                    var hostPart = hostField.Substring(0, idx).Trim();
+                    var portPart = hostField.Substring(idx + 1).Trim();
+                    if (int.TryParse(portPart, out var pColon) && pColon > 0)
+                    {
+                        hostField = hostPart;
+                        if (string.IsNullOrWhiteSpace(portField)) portField = pColon.ToString();
+                    }
+                }
+                if (int.TryParse(portField, out var p) && p > 0) GroupConfig.HostPort = p;
+                GroupConfig.HostAddress = hostField; // sempre host puro
+                _groupHost.Text = hostField;
+                _groupPort.Text = GroupConfig.HostPort.ToString();
             }
             catch { }
         }
