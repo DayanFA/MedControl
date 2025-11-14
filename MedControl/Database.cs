@@ -385,7 +385,17 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                     catch { }
                     return;
                 }
-                catch { /* fallback local */ }
+                catch (Exception ex)
+                {
+                    // Se for erro de autenticação/validação do Host, informa usuário e NÃO faz fallback local
+                    var msg = (ex.Message ?? string.Empty).ToLowerInvariant();
+                    if (msg.Contains("senha") || msg.Contains("grupo") || msg.Contains("auth"))
+                    {
+                        try { if (IsUiThread()) MessageBox.Show("Falha ao gravar no Host: " + ex.Message + "\nVerifique Nome do Grupo e Senha em Conexões.", "Erro no Host", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                        return;
+                    }
+                    // Caso contrário, segue com fallback local (modo offline)
+                }
             }
             using var conn = CreateConnection();
             conn.Open();
@@ -430,7 +440,16 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                     catch { }
                     return;
                 }
-                catch { /* fallback local */ }
+                catch (Exception ex)
+                {
+                    var msg = (ex.Message ?? string.Empty).ToLowerInvariant();
+                    if (msg.Contains("senha") || msg.Contains("grupo") || msg.Contains("auth"))
+                    {
+                        try { if (IsUiThread()) MessageBox.Show("Falha ao atualizar no Host: " + ex.Message + "\nVerifique Nome do Grupo e Senha em Conexões.", "Erro no Host", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                        return;
+                    }
+                    // Caso contrário, permite fallback local
+                }
             }
             using var conn = CreateConnection();
             conn.Open();
@@ -474,7 +493,16 @@ ON CONFLICT(nome) DO UPDATE SET num_copias=excluded.num_copias, descricao=exclud
                     catch { }
                     return;
                 }
-                catch { /* fallback local */ }
+                catch (Exception ex)
+                {
+                    var msg = (ex.Message ?? string.Empty).ToLowerInvariant();
+                    if (msg.Contains("senha") || msg.Contains("grupo") || msg.Contains("auth"))
+                    {
+                        try { if (IsUiThread()) MessageBox.Show("Falha ao excluir no Host: " + ex.Message + "\nVerifique Nome do Grupo e Senha em Conexões.", "Erro no Host", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                        return;
+                    }
+                    // Caso contrário, permite fallback local
+                }
             }
             using var conn = CreateConnection();
             conn.Open();

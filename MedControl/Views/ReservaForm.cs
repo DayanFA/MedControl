@@ -11,6 +11,9 @@ namespace MedControl.Views
         private ComboBox _aluno = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; // permite digitar
         private ComboBox _prof = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
         private DateTimePicker _dataHora = new DateTimePicker { Format = DateTimePickerFormat.Custom, CustomFormat = "dd/MM/yyyy HH:mm:ss", ShowUpDown = true };
+        private CheckBox _outros = new CheckBox { Text = "Outros" };
+        private TextBox _quem = new TextBox();
+        private TextBox _contato = new TextBox();
         private Button _btnSalvar = new Button();
         private Button _btnCancelar = new Button();
 
@@ -48,13 +51,14 @@ namespace MedControl.Views
 
             // Fonte e dimensões dos inputs
             var inputFont = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
-            foreach (var c in new Control[] { _chave, _aluno, _prof })
+            foreach (var c in new Control[] { _chave, _aluno, _prof, _quem, _contato })
             {
                 c.Font = inputFont;
                 c.Margin = new Padding(3, 8, 3, 8);
                 c.MinimumSize = new Size(260, 30);
                 c.Dock = DockStyle.Fill;
             }
+            _outros.Font = inputFont; _outros.Margin = new Padding(3,8,3,8);
             _dataHora.Font = inputFont;
             _dataHora.Margin = new Padding(3, 8, 3, 8);
             _dataHora.MinimumSize = new Size(200, 30);
@@ -78,6 +82,31 @@ namespace MedControl.Views
             _prof.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
             _prof.AutoCompleteSource = AutoCompleteSource.ListItems;
             layout.Controls.Add(_prof, 1, row++);
+
+            // Checkbox Outros
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(new Label { Text = string.Empty, AutoSize = true }, 0, row);
+            layout.Controls.Add(_outros, 1, row++);
+
+            // Campos Quem e Contato (inicialmente ocultos)
+            var _lblQuem = MkLabel("Quem");
+            var _lblContato = MkLabel("Contato");
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(_lblQuem, 0, row);
+            layout.Controls.Add(_quem, 1, row++);
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.Controls.Add(_lblContato, 0, row);
+            layout.Controls.Add(_contato, 1, row++);
+            Action toggleOutros = () =>
+            {
+                var on = _outros.Checked;
+                _lblQuem.Visible = on; _quem.Visible = on;
+                _lblContato.Visible = on; _contato.Visible = on;
+                _aluno.Enabled = !on; _prof.Enabled = !on;
+                if (on) { _aluno.Text = string.Empty; _prof.Text = string.Empty; }
+            };
+            _lblQuem.Visible = _quem.Visible = _lblContato.Visible = _contato.Visible = false;
+            _outros.CheckedChanged += (_, __) => toggleOutros();
 
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.Controls.Add(MkLabel("Data e Hora"), 0, row);
@@ -238,16 +267,30 @@ namespace MedControl.Views
             _btnCancelar.Click += (_, __) => { DialogResult = DialogResult.Cancel; Close(); };
             _btnSalvar.Click += (_, __) =>
             {
-                if (string.IsNullOrWhiteSpace(_chave.Text) || (string.IsNullOrWhiteSpace(_aluno.Text) && string.IsNullOrWhiteSpace(_prof.Text)))
+                var usandoOutros = _outros.Checked;
+                if (string.IsNullOrWhiteSpace(_chave.Text) ||
+                    (
+                        !usandoOutros && string.IsNullOrWhiteSpace(_aluno.Text) && string.IsNullOrWhiteSpace(_prof.Text)
+                    ) ||
+                    (
+                        usandoOutros && (string.IsNullOrWhiteSpace(_quem.Text) || string.IsNullOrWhiteSpace(_contato.Text))
+                    ))
                 {
-                    MessageBox.Show(this, "Selecione uma chave e informe aluno ou professor.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, "Informe: Chave e Aluno/Professor ou marque Outros com Quem e Contato.", "Validação", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
+                }
+                string alunoVal = _aluno.Text.Trim();
+                string profVal = _prof.Text.Trim();
+                if (usandoOutros)
+                {
+                    alunoVal = $"{_quem.Text.Trim()} (Contato: {_contato.Text.Trim()})";
+                    profVal = string.Empty;
                 }
                 var r = new Reserva
                 {
                     Chave = _chave.Text.Trim(),
-                    Aluno = _aluno.Text.Trim(),
-                    Professor = _prof.Text.Trim(),
+                    Aluno = alunoVal,
+                    Professor = profVal,
                     DataHora = _dataHora.Value,
                     EmUso = false,
                     Termo = string.Empty,

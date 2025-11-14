@@ -164,14 +164,42 @@ namespace MedControl
                 return false;
             }
         }
-        // Encaminhadores de escrita
-        public static void InsertReserva(Reserva r) => Send(new { type = "write", entity = "reserva", data = r });
-        public static void UpdateReserva(Reserva r) => Send(new { type = "write", entity = "reserva_update", data = r });
-        public static void DeleteReserva(Reserva r) => Send(new { type = "write", entity = "reserva_delete", data = r });
-        public static void InsertRelatorio(Relatorio r) => Send(new { type = "write", entity = "relatorio", data = r });
-        public static void ReplaceAllChaves(System.Collections.Generic.List<Chave> list) => Send(new { type = "write", entity = "chaves_replace", data = list });
-        public static void ReplaceAllAlunos(System.Data.DataTable table) => Send(new { type = "write", entity = "alunos_replace", data = JsonTableHelper.SerializeDataTable(table) });
-        public static void ReplaceAllProfessores(System.Data.DataTable table) => Send(new { type = "write", entity = "professores_replace", data = JsonTableHelper.SerializeDataTable(table) });
+        // Encaminhadores de escrita (lançam exceção quando Host retorna ok=false)
+        public static void InsertReserva(Reserva r)
+        {
+            var resp = Send(new { type = "write", entity = "reserva", data = r });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha ao inserir reserva no Host");
+        }
+        public static void UpdateReserva(Reserva r)
+        {
+            var resp = Send(new { type = "write", entity = "reserva_update", data = r });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha ao atualizar reserva no Host");
+        }
+        public static void DeleteReserva(Reserva r)
+        {
+            var resp = Send(new { type = "write", entity = "reserva_delete", data = r });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha ao excluir reserva no Host");
+        }
+        public static void InsertRelatorio(Relatorio r)
+        {
+            var resp = Send(new { type = "write", entity = "relatorio", data = r });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha ao inserir relatório no Host");
+        }
+        public static void ReplaceAllChaves(System.Collections.Generic.List<Chave> list)
+        {
+            var resp = Send(new { type = "write", entity = "chaves_replace", data = list });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha no Host (chaves_replace)");
+        }
+        public static void ReplaceAllAlunos(System.Data.DataTable table)
+        {
+            var resp = Send(new { type = "write", entity = "alunos_replace", data = JsonTableHelper.SerializeDataTable(table) });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha no Host (alunos_replace)");
+        }
+        public static void ReplaceAllProfessores(System.Data.DataTable table)
+        {
+            var resp = Send(new { type = "write", entity = "professores_replace", data = JsonTableHelper.SerializeDataTable(table) });
+            if (!resp.ok) throw new IOException(resp.error ?? "Falha no Host (professores_replace)");
+        }
 
         // Pulls
         public static System.Collections.Generic.List<Chave> PullChaves(int connectTimeoutMs = 200, int ioTimeoutMs = 600)
