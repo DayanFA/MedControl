@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Collections.Concurrent;
+using System.Net.NetworkInformation;
 
 namespace MedControl
 {
@@ -515,13 +516,41 @@ namespace MedControl
         {
             try
             {
-                // Método de detecção confiável: conecta a um IP externo sem enviar dados para obter o IP local
-                using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-                try { s.Connect("1.1.1.1", 80); }
-                catch { try { s.Connect("8.8.8.8", 80); } catch { } }
-                if (s.LocalEndPoint is IPEndPoint lep) return lep.Address.ToString();
+                string? best = null;
+                int bestScore = -1;
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                    // Ignora loopback e interfaces de túnel desnecessárias
+                    if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    var ipProps = nic.GetIPProperties();
+                    foreach (var unicast in ipProps.UnicastAddresses)
+                    {
+                        var ip = unicast.Address;
+                        if (ip.AddressFamily != AddressFamily.InterNetwork) continue; // só IPv4
+                        if (IPAddress.IsLoopback(ip)) continue;
+                        var bytes = ip.GetAddressBytes();
+                        bool is169 = bytes[0] == 169 && bytes[1] == 254; // link-local
+                        if (is169) continue; // evita 169.254.x.x instável
+                        bool isPrivate = bytes[0] == 10 || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) || (bytes[0] == 192 && bytes[1] == 168);
+                        // Score heurístico
+                        int score = 0;
+                        if (isPrivate) score += 5;
+                        if (nic.NetworkInterfaceType == NetworkInterfaceType.Wireless80211) score += 2; // provável hotspot wifi
+                        if (nic.Description.ToLowerInvariant().Contains("host") || nic.Description.ToLowerInvariant().Contains("wifi") || nic.Description.ToLowerInvariant().Contains("virtual")) score += 1;
+                        // Se tem gateway, soma
+                        if (ipProps.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork)) score += 1;
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = ip.ToString();
+                        }
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(best)) return best!;
             }
             catch { }
+            // Fallback antigo se heurística falhar
             try
             {
                 var host = Dns.GetHostEntry(Dns.GetHostName());
@@ -533,6 +562,19 @@ namespace MedControl
             }
             catch { }
             return "127.0.0.1";
+        }
+
+        // Atualiza presença ao mudar endereços (ex: hotspot inicializa / cliente conecta)
+        static SyncService()
+        {
+            try
+            {
+                NetworkChange.NetworkAddressChanged += (_, __) =>
+                {
+                    try { TryAddOrUpdateSelfPeer(); ForceBeacon(); } catch { }
+                };
+            }
+            catch { }
         }
     }
 }
